@@ -1,0 +1,16 @@
+============================================================
+  Oracle Validation Report
+============================================================
+  Total readings     : 24,000
+  Accepted           : 23,208  (96.70%)
+  Rejected           : 792  (3.30%)
+
+  Rejection breakdown:
+    EXPIRED_CERTIFICATE            : 720
+    THRESHOLD_EXCEEDED             : 72
+
+  Cross-analysis with malicious flag:
+    Malicious readings total    : 1,200
+    Malicious readings rejected : 0  (0.00%)
+    Honest readings total       : 22,800
+    Honest readings rejected    : 792  (3.47%)

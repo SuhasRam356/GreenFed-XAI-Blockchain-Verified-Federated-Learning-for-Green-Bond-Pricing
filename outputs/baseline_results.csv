@@ -1,0 +1,5 @@
+model,rmse_pct,mape_pct,train_time_s
+Linear Regression,0.1268,3.7,0.0
+XGBoost,0.0909,2.8,4.67
+Centralized NN,0.0904,2.83,12.96
+FedAvg (no blockchain),0.1068,3.31,57.1
