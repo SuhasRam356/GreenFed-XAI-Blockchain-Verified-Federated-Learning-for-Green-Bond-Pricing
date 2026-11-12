@@ -23,3 +23,7 @@ env/
 .DS_Store
 Thumbs.db
 
+# Go binaries & build artifacts
+*.exe
+chain/chaincode/*.exe
+
