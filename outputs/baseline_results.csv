@@ -1,6 +1,4 @@
-model,rmse_pct,mape_pct,train_time_s
-Linear Regression,0.1268,3.7,0.0
-XGBoost,0.0909,2.8,4.67
-Centralized NN,0.0904,2.83,12.96
-FedAvg (no blockchain),0.1068,3.31,57.1
-GreenFed-XAI (blockchain-verified),0.1242,3.58,125.91
+model,rmse_pct,mae_pct,mae_bps,mape_pct,train_time_s
+Linear Regression,0.1268,0.0973,9.73,3.7,0.01
+XGBoost,0.0909,0.0719,7.19,2.8,2.54
+Centralized NN,0.0893,0.0711,7.11,2.79,11.57

@@ -37,3 +37,4 @@ As mandated by scientific integrity guidelines, this project is **not** a claim 
 6. **Blockchain Ledger: Mock vs. Hyperledger Fabric**:
    - Local experiments utilize `chain/mock_ledger.py`, a pure Python in-memory permissioned ledger providing deterministic hashing, SHA-256 block linkage, and query capabilities.
    - The Hyperledger Fabric Go chaincode in `chain/chaincode/smart_contract.go` provides the production-grade smart contract definition for deployment on Fabric 2.4+.
+

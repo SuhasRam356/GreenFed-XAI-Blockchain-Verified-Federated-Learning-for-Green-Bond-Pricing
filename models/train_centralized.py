@@ -27,7 +27,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 import xgboost as xgb
 
 # Add project root to path
@@ -39,26 +39,54 @@ from models.preprocessing import DataPreprocessor
 
 
 # ---------------------------------------------------------------------------
-# Metrics
+# Metrics & Denominator Policies
 # ---------------------------------------------------------------------------
 
 def compute_rmse(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Root Mean Square Error (%)."""
+    """Root Mean Square Error in percentage points (%)."""
     return float(np.sqrt(mean_squared_error(y_true, y_pred)))
 
 
-def compute_mape(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    """Mean Absolute Percentage Error (%).
+def compute_mae(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Mean Absolute Error in percentage points (%)."""
+    return float(mean_absolute_error(y_true, y_pred))
 
-    Returns the error as a percentage (e.g., 5.0 means 5%).
-    Handles near-zero values by clipping denominator.
+
+def compute_mae_bps(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Mean Absolute Error in basis points (1 bp = 0.01% = 0.01 percentage point)."""
+    return float(compute_mae(y_true, y_pred) * 100.0)
+
+
+def compute_mape(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    eps: float = 1e-6,
+) -> float:
+    """Mean Absolute Percentage Error (%) with protected denominator.
+
+    Parameters:
+    -----------
+    y_true : np.ndarray
+        Ground-truth yield spread targets (percentage points).
+    y_pred : np.ndarray
+        Model predicted yield spread targets (percentage points).
+    eps : float
+        Protected denominator threshold.
+
+    Returns:
+    --------
+    float
+        MAPE expressed as percentage (e.g., 2.80 means 2.80%).
     """
-    y_true = np.array(y_true, dtype=np.float64)
-    y_pred = np.array(y_pred, dtype=np.float64)
-    # Avoid division by zero — clip true values away from zero
-    denom = np.clip(np.abs(y_true), 1e-8, None)
-    mape = np.mean(np.abs((y_true - y_pred) / denom)) * 100
-    return float(mape)
+    y_t = np.asarray(y_true, dtype=np.float64).flatten()
+    y_p = np.asarray(y_pred, dtype=np.float64).flatten()
+    denom = np.clip(np.abs(y_t), eps, None)
+    return float(np.mean(np.abs((y_t - y_p) / denom)) * 100.0)
+
+
+def count_near_zero_targets(y_true: np.ndarray, threshold: float = 0.05) -> int:
+    """Count how many actual targets are near zero (<= threshold percentage points)."""
+    return int(np.sum(np.abs(np.asarray(y_true)) <= threshold))
 
 
 # ---------------------------------------------------------------------------
@@ -84,10 +112,13 @@ def train_linear_regression(
     y_pred = model.predict(X_test)
     y_pred = np.clip(y_pred, 0.01, None)
     rmse = compute_rmse(y_test, y_pred)
+    mae = compute_mae(y_test, y_pred)
+    mae_bps = compute_mae_bps(y_test, y_pred)
     mape = compute_mape(y_test, y_pred)
 
     print(f"  Training time : {train_time:.2f}s")
     print(f"  RMSE (%)      : {rmse:.4f}")
+    print(f"  MAE (%)       : {mae:.4f} ({mae_bps:.2f} bps)")
     print(f"  MAPE (%)      : {mape:.2f}")
 
     return {
@@ -95,6 +126,8 @@ def train_linear_regression(
         "model": model,
         "y_pred": y_pred,
         "rmse": rmse,
+        "mae": mae,
+        "mae_bps": mae_bps,
         "mape": mape,
         "train_time": train_time,
     }
@@ -141,11 +174,14 @@ def train_xgboost(
     y_pred = model.predict(X_test)
     y_pred = np.clip(y_pred, 0.01, None)
     rmse = compute_rmse(y_test, y_pred)
+    mae = compute_mae(y_test, y_pred)
+    mae_bps = compute_mae_bps(y_test, y_pred)
     mape = compute_mape(y_test, y_pred)
 
     print(f"  Training time : {train_time:.2f}s")
     print(f"  Best iteration: {model.best_iteration}")
     print(f"  RMSE (%)      : {rmse:.4f}")
+    print(f"  MAE (%)       : {mae:.4f} ({mae_bps:.2f} bps)")
     print(f"  MAPE (%)      : {mape:.2f}")
 
     return {
@@ -153,6 +189,8 @@ def train_xgboost(
         "model": model,
         "y_pred": y_pred,
         "rmse": rmse,
+        "mae": mae,
+        "mae_bps": mae_bps,
         "mape": mape,
         "train_time": train_time,
     }
@@ -268,11 +306,14 @@ def train_neural_network(
     y_pred = np.clip(y_pred, 0.01, None)
 
     rmse = compute_rmse(y_test, y_pred)
+    mae = compute_mae(y_test, y_pred)
+    mae_bps = compute_mae_bps(y_test, y_pred)
     mape = compute_mape(y_test, y_pred)
 
     print(f"\n  Best epoch    : {best_epoch}")
     print(f"  Training time : {train_time:.2f}s")
     print(f"  RMSE (%)      : {rmse:.4f}")
+    print(f"  MAE (%)       : {mae:.4f} ({mae_bps:.2f} bps)")
     print(f"  MAPE (%)      : {mape:.2f}")
 
     return {
@@ -280,6 +321,8 @@ def train_neural_network(
         "model": model,
         "y_pred": y_pred,
         "rmse": rmse,
+        "mae": mae,
+        "mae_bps": mae_bps,
         "mape": mape,
         "train_time": train_time,
         "best_epoch": best_epoch,
@@ -290,23 +333,32 @@ def train_neural_network(
 # Results Table
 # ---------------------------------------------------------------------------
 
-def print_results_table(results: list[dict]):
-    """Print a results table matching the paper's Table I format."""
-    print("\n" + "=" * 60)
+def print_results_table(results: list[dict], near_zero_count: int = 0, n_test: int = 1500):
+    """Print a results table matching the paper's Table I format with MAE (bps) and near-zero audit."""
+    print("\n" + "=" * 76)
     print("  GREEN BOND YIELD SPREAD PREDICTION ERROR")
-    print("  (Table I — Centralized Baselines)")
-    print("=" * 60)
-    print(f"  {'Model':<30s} {'RMSE (%)':>10s} {'MAPE (%)':>10s}")
-    print("  " + "-" * 52)
+    print("  (Table I — Centralized Baselines with Basis Points & MAPE Policy)")
+    print("=" * 76)
+    print(f"  {'Model':<24s} {'RMSE (%)':>10s} {'MAE (%)':>10s} {'MAE (bps)':>12s} {'MAPE (%)':>10s}")
+    print("  " + "-" * 72)
     for r in results:
-        print(f"  {r['model_name']:<30s} {r['rmse']:>10.4f} {r['mape']:>10.2f}")
-    print("=" * 60)
+        print(
+            f"  {r['model_name']:<24s} "
+            f"{r['rmse']:>10.4f} "
+            f"{r['mae']:>10.4f} "
+            f"{r['mae_bps']:>12.2f} "
+            f"{r['mape']:>10.2f}"
+        )
+    print("=" * 76)
+    print(f"  Near-zero target count (y <= 0.05%): {near_zero_count} / {n_test} ({100.0 * near_zero_count / n_test:.2f}%)")
+    print("  MAPE denominator protected by eps = 1e-6 percentage points.")
+    print("=" * 76)
 
     # Paper's reference values
-    print("\n  Paper's reported values (for comparison):")
-    print(f"  {'Linear Regression':<30s} {'0.68':>10s} {'7.9':>10s}")
-    print(f"  {'XGBoost':<30s} {'0.42':>10s} {'5.0':>10s}")
-    print(f"  {'Centralized NN':<30s} {'0.24':>10s} {'2.5':>10s}")
+    print("\n  Paper's reported benchmarks (for comparison):")
+    print(f"  {'Linear Regression':<24s} {'0.68':>10s} {'—':>10s} {'—':>12s} {'7.9':>10s}")
+    print(f"  {'XGBoost':<24s} {'0.42':>10s} {'—':>10s} {'—':>12s} {'5.0':>10s}")
+    print(f"  {'Centralized NN':<24s} {'0.24':>10s} {'—':>10s} {'—':>12s} {'2.5':>10s}")
     print()
 
 
@@ -317,6 +369,8 @@ def save_results(results: list[dict], out_dir: Path):
         rows.append({
             "model": r["model_name"],
             "rmse_pct": round(r["rmse"], 4),
+            "mae_pct": round(r["mae"], 4),
+            "mae_bps": round(r["mae_bps"], 2),
             "mape_pct": round(r["mape"], 2),
             "train_time_s": round(r["train_time"], 2),
         })
@@ -395,8 +449,11 @@ def main():
     )
     results.append(nn_result)
 
+    # Count near-zero values for audit
+    near_zeros = count_near_zero_targets(y_test, threshold=0.05)
+
     # Print and save results
-    print_results_table(results)
+    print_results_table(results, near_zero_count=near_zeros, n_test=len(y_test))
     save_results(results, out_dir)
     save_predictions(results, y_test, out_dir)
 

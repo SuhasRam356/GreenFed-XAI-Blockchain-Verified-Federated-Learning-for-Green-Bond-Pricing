@@ -25,7 +25,10 @@ from models.nn_model import GreenBondNN
 from models.preprocessing import DataPreprocessor, RATING_ORDER, FEATURE_COLS
 from models.train_centralized import (
     compute_rmse,
+    compute_mae,
+    compute_mae_bps,
     compute_mape,
+    count_near_zero_targets,
     train_linear_regression,
     train_xgboost,
     train_neural_network,
@@ -260,6 +263,20 @@ class TestMetrics:
         y_true = np.abs(rng.normal(1.5, 0.5, 100)) + 0.1
         y_pred = np.abs(rng.normal(1.5, 0.5, 100)) + 0.1
         assert compute_mape(y_true, y_pred) >= 0
+
+    def test_mae_and_bps(self):
+        """MAE in basis points should be exactly 100 * MAE percentage."""
+        y_true = np.array([2.0, 3.0])
+        y_pred = np.array([2.1, 2.9])
+        mae = compute_mae(y_true, y_pred)
+        mae_bps = compute_mae_bps(y_true, y_pred)
+        assert mae == pytest.approx(0.1)
+        assert mae_bps == pytest.approx(10.0)
+
+    def test_count_near_zero(self):
+        """Should accurately identify targets close to zero."""
+        y = np.array([0.01, 0.04, 0.06, 1.50])
+        assert count_near_zero_targets(y, threshold=0.05) == 2
 
 
 # ===================================================================
