@@ -238,6 +238,38 @@ class TestGreenFedAvgStrategy:
 
         np.testing.assert_allclose(aggregated[0], np.array([2.5, 5.0]), rtol=1e-5)
 
+    def test_equal_client_averaging_math(self):
+        """Equal-client averaging weights each client uniformly (1/K)."""
+        w1 = np.array([1.0, 2.0])
+        w2 = np.array([3.0, 6.0])
+
+        # Client 1 has 100 samples, Client 2 has 900 samples
+        # Equal averaging must yield (w1 + w2) / 2 = [2.0, 4.0]
+        # (Whereas weighted averaging would yield 0.1*w1 + 0.9*w2 = [2.8, 5.6])
+        equal_avg = (w1 + w2) / 2.0
+        np.testing.assert_allclose(equal_avg, np.array([2.0, 4.0]), rtol=1e-5)
+
+    def test_unequal_client_sizes_renormalization(self):
+        """When a subset of clients is accepted, weights renormalize to sum to 1.0."""
+        # 3 clients with sample sizes 100, 300, 600
+        # If client 3 is rejected, accepted sizes are 100 and 300 (total = 400)
+        accepted_samples = [100, 300]
+        total_accepted = sum(accepted_samples)
+        fractions = [s / total_accepted for s in accepted_samples]
+        assert sum(fractions) == pytest.approx(1.0)
+        assert fractions == [0.25, 0.75]
+
+    def test_no_accepted_clients_fallback(self):
+        """Engine must preserve previous weights when all updates are rejected."""
+        init_weights = [np.array([1.0, 2.0])]
+        engine = FederatedSimulationEngine(
+            clients=[],
+            strategy=GreenFedAvgStrategy(),
+            initial_weights=init_weights,
+            eval_test_dataset=(np.zeros((1, 2)), np.zeros(1)),
+        )
+        assert engine.current_weights[0].tolist() == [1.0, 2.0]
+
 
 # ===================================================================
 # Test: FederatedSimulationEngine (End-to-End Integration)

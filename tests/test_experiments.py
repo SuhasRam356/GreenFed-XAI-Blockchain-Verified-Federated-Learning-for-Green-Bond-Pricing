@@ -164,3 +164,4 @@ class TestExperimentExecution:
 
         assert (tmp_path / "attack_matrix_comparison.png").exists()
         assert (tmp_path / "tau_sensitivity.png").exists()
+

@@ -145,6 +145,9 @@ class VerificationStatus(enum.Enum):
     REJECTED_HASH_MISMATCH = "REJECTED_HASH_MISMATCH"
     REJECTED_NORM_EXCEEDED = "REJECTED_NORM_EXCEEDED"
     REJECTED_BOTH = "REJECTED_BOTH"
+    REJECTED_DUPLICATE_SUBMISSION = "REJECTED_DUPLICATE_SUBMISSION"
+    REJECTED_REPLAY_ATTACK = "REJECTED_REPLAY_ATTACK"
+    REJECTED_QUORUM_NOT_MET = "REJECTED_QUORUM_NOT_MET"
 
 
 # =============================================================================
@@ -873,6 +876,9 @@ class SmartContract:
         # In-memory hash index: {round_idx: {client_id: submitted_hash}}
         self.submitted_hashes: Dict[int, Dict[int, str]] = {}
 
+        # Set of (round_idx, client_id) tuples processed to detect duplicate submissions
+        self.processed_updates: Set[Tuple[int, int]] = set()
+
         # Complete verification history for audit
         self.verification_history: List[VerificationResult] = []
 
@@ -1087,6 +1093,7 @@ class SmartContract:
         grad_norm: float,
         round_idx: int,
         submitted_hash: Optional[str] = None,
+        expected_round: Optional[int] = None,
     ) -> VerificationResult:
         """Execute the complete two-phase verification pipeline.
 
@@ -1097,11 +1104,12 @@ class SmartContract:
         The verification pipeline:
             1. If ``submitted_hash`` is provided and no prior submission
                exists, auto-submit the hash to the ledger.
-            2. Recompute SHA-256 hash from raw parameters.
-            3. Compare against the committed hash (Phase 1).
-            4. Check gradient norm against τ (Phase 2).
-            5. Record ACCEPT_UPDATE or REJECT_POISONED on the ledger.
-            6. Return VerificationResult with full audit metadata.
+            2. Check for replay attack (round index mismatch against active round).
+            3. Check for duplicate update submission by the same client in this round.
+            4. Recompute SHA-256 hash from raw parameters and compare against committed hash.
+            5. Check gradient norm against τ (Phase 2).
+            6. Record ACCEPT_UPDATE or REJECT_POISONED on the ledger.
+            7. Return VerificationResult with full audit metadata.
 
         Parameters:
             client_id: Integer ID of the bank being verified (0 to K-1).
@@ -1110,6 +1118,7 @@ class SmartContract:
             round_idx: Current FL communication round index.
             submitted_hash: Optional pre-computed hash. If provided and
                 no prior submission exists, it is submitted automatically.
+            expected_round: Optional active round index to detect replay attacks.
 
         Returns:
             VerificationResult containing the status, check details,
@@ -1125,23 +1134,47 @@ class SmartContract:
             if existing is None:
                 self.submit_hash(client_id, submitted_hash, round_idx)
 
-        # Phase 1: Hash integrity verification
-        hash_valid, computed_hash, stored_hash = self.verify_hash(
-            client_id, parameters, round_idx
-        )
-
-        # Phase 2: Gradient norm check
-        norm_valid = self.check_gradient_norm(grad_norm)
-
-        # Determine verification status
-        if hash_valid and norm_valid:
-            status = VerificationStatus.ACCEPTED
-        elif not hash_valid and not norm_valid:
-            status = VerificationStatus.REJECTED_BOTH
-        elif not hash_valid:
-            status = VerificationStatus.REJECTED_HASH_MISMATCH
+        # Replay Attack Detection
+        if expected_round is not None and round_idx != expected_round:
+            hash_valid, computed_hash, stored_hash = False, "", ""
+            norm_valid = False
+            status = VerificationStatus.REJECTED_REPLAY_ATTACK
+            logger.warning(
+                "REPLAY ATTACK DETECTED | Client: %d | Submitted Round: %d != Active Round: %d",
+                client_id,
+                round_idx,
+                expected_round,
+            )
+        # Duplicate Submission Detection
+        elif (round_idx, client_id) in self.processed_updates:
+            hash_valid, computed_hash, stored_hash = False, "", ""
+            norm_valid = False
+            status = VerificationStatus.REJECTED_DUPLICATE_SUBMISSION
+            logger.warning(
+                "DUPLICATE SUBMISSION DETECTED | Client: %d already submitted for Round: %d",
+                client_id,
+                round_idx,
+            )
         else:
-            status = VerificationStatus.REJECTED_NORM_EXCEEDED
+            self.processed_updates.add((round_idx, client_id))
+
+            # Phase 1: Hash integrity verification
+            hash_valid, computed_hash, stored_hash = self.verify_hash(
+                client_id, parameters, round_idx
+            )
+
+            # Phase 2: Gradient norm check
+            norm_valid = self.check_gradient_norm(grad_norm)
+
+            # Determine verification status
+            if hash_valid and norm_valid:
+                status = VerificationStatus.ACCEPTED
+            elif not hash_valid and not norm_valid:
+                status = VerificationStatus.REJECTED_BOTH
+            elif not hash_valid:
+                status = VerificationStatus.REJECTED_HASH_MISMATCH
+            else:
+                status = VerificationStatus.REJECTED_NORM_EXCEEDED
 
         verification_time_ms = (time.time() - verification_start) * 1000.0
 
@@ -1248,6 +1281,39 @@ class SmartContract:
         )
 
         return result
+
+    # -----------------------------------------------------------------------
+    # Quorum Verification (>50% Participation Rule)
+    # -----------------------------------------------------------------------
+
+    def check_quorum(
+        self,
+        round_idx: int,
+        total_clients: int = 8,
+        min_participation_ratio: float = 0.5,
+    ) -> Tuple[bool, int, float]:
+        """Verify whether the round reached the >50% participation quorum.
+
+        As specified in Section IV-D of the IEEE paper, a global communication
+        round is only quorate and eligible for aggregation if more than 50%
+        of authorized clients successfully pass verification.
+
+        Parameters:
+            round_idx: FL communication round index.
+            total_clients: Total consortium size (default: 8).
+            min_participation_ratio: Minimum ratio required (> 0.5).
+
+        Returns:
+            Tuple of (is_quorate, num_accepted, participation_ratio).
+        """
+        round_accepted = [
+            r for r in self.verification_history
+            if r.round_idx == round_idx and r.status == VerificationStatus.ACCEPTED
+        ]
+        n_accepted = len(round_accepted)
+        ratio = (n_accepted / total_clients) if total_clients > 0 else 0.0
+        is_quorate = ratio > min_participation_ratio
+        return is_quorate, n_accepted, ratio
 
     # -----------------------------------------------------------------------
     # Audit & Analytics

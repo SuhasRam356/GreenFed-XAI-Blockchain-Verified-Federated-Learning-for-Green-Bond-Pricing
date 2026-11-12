@@ -531,3 +531,80 @@ def test_end_to_end_blockchain_verified_fl_simulation(tmp_path: Path) -> None:
     valid, errors = strategy.blockchain.validate_chain()
     assert valid is True
     assert len(errors) == 0
+
+
+def test_smart_contract_duplicate_submission_detection(
+    smart_contract: SmartContract, dummy_parameters: List[np.ndarray]
+) -> None:
+    """Smart contract must detect and reject duplicate submissions in the same round."""
+    param_hash = SmartContract.compute_parameter_hash(dummy_parameters)
+    smart_contract.submit_hash(client_id=0, parameter_hash=param_hash, round_idx=1)
+
+    # First submission: should succeed
+    res1 = smart_contract.process_update(
+        client_id=0,
+        parameters=dummy_parameters,
+        grad_norm=1.0,
+        round_idx=1,
+    )
+    assert res1.status == VerificationStatus.ACCEPTED
+
+    # Second submission by the same client in the same round: duplicate rejection
+    res2 = smart_contract.process_update(
+        client_id=0,
+        parameters=dummy_parameters,
+        grad_norm=1.0,
+        round_idx=1,
+    )
+    assert res2.status == VerificationStatus.REJECTED_DUPLICATE_SUBMISSION
+
+
+def test_smart_contract_replay_across_rounds_detection(
+    smart_contract: SmartContract, dummy_parameters: List[np.ndarray]
+) -> None:
+    """Smart contract must reject updates replayed from past rounds."""
+    # Client submits an update stamped for round 1 when active round is round 2
+    res = smart_contract.process_update(
+        client_id=1,
+        parameters=dummy_parameters,
+        grad_norm=1.0,
+        round_idx=1,
+        expected_round=2,
+    )
+    assert res.status == VerificationStatus.REJECTED_REPLAY_ATTACK
+
+
+def test_quorum_enforcement_in_blockchain_strategy() -> None:
+    """Strategy must reject aggregation if >50% participation quorum is not met."""
+    device = torch.device("cpu")
+    model = GreenBondNN(input_dim=5, dropout_rate=0.0).to(device)
+
+    strategy = BlockchainVerifiedStrategy(
+        model_template=model,
+        device=device,
+        tau=2.5,
+        quorum_fraction=0.5,  # Requires strictly > 50%
+        mining_difficulty=1,
+    )
+
+    # 4 clients total, but 3 are poisoned (norm 10.0 > 2.5) and only 1 is honest (norm 1.0)
+    # Accepted = 1 / 4 = 25% <= 50% -> Quorum NOT met!
+    p_mock = [np.zeros((5, 128), dtype=np.float32)]
+    fit_results = []
+    for cid in range(4):
+        norm = 1.0 if cid == 0 else 10.0
+        client_proxy = type("ClientProxyMock", (), {"cid": str(cid)})()
+        fit_res = type(
+            "FitResMock",
+            (),
+            {
+                "parameters": type("ParamMock", (), {"ndarrays": p_mock})(),
+                "num_examples": 100,
+                "metrics": {"client_id": cid, "grad_norm": norm},
+            },
+        )()
+        fit_results.append((client_proxy, fit_res))
+
+    accepted, meta = strategy.verify_and_filter_updates(1, fit_results)
+    # Because quorum (1/4 = 25% <= 50%) failed, accepted_results must be empty!
+    assert len(accepted) == 0

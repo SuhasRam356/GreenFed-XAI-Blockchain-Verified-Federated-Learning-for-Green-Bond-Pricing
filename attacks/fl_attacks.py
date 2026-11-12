@@ -471,3 +471,4 @@ def compute_attack_confusion_matrix(
         "formula_tpr": f"{tp} / {total_malicious} ({tpr * 100.0:.2f}%)",
         "formula_fpr": f"{fp} / {total_honest} ({fpr * 100.0:.2f}%)",
     }
+

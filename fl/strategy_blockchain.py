@@ -181,6 +181,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
         device: Optional[torch.device] = None,
         tau: float = 2.5,
         enforce_norm: bool = True,
+        quorum_fraction: float = 0.5,
         mining_difficulty: int = 2,
         max_transactions_per_block: int = 10,
         fraction_fit: float = 1.0,
@@ -224,6 +225,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
 
         self.tau = tau
         self.enforce_norm = enforce_norm
+        self.quorum_fraction = quorum_fraction
 
         self.blockchain = MockBlockchain(
             mining_difficulty=mining_difficulty,
@@ -466,6 +468,20 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
             "blocks_mined_this_round": blocks_mined,
             "chain_valid": self.blockchain.validate_chain()[0],
         }
+
+        # Quorum Enforcement (>50% Participation Rule from Section IV-D)
+        min_quorum = total_submitted * self.quorum_fraction
+        is_quorate = total_accepted > min_quorum
+        if not is_quorate and total_submitted > 0:
+            logger.warning(
+                "QUORUM NOT REACHED | Round %d: Only %d/%d accepted (requires > %.0f%%). "
+                "Rejecting aggregation for this round.",
+                server_round,
+                total_accepted,
+                total_submitted,
+                self.quorum_fraction * 100,
+            )
+            accepted_results = []
 
         return accepted_results, audit_metadata
 
