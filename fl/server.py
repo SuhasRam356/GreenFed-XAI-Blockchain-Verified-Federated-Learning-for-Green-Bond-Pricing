@@ -278,16 +278,16 @@ class FederatedSimulationEngine:
         model.eval()
 
         X_t = torch.tensor(X_test, dtype=torch.float32)
-        y_t = torch.tensor(y_test, dtype=torch.float32)
+        y_t = torch.tensor(y_test, dtype=torch.float32).view(-1)
 
         with torch.no_grad():
             preds = model(X_t)
             loss = torch.nn.MSELoss()(preds, y_t).item()
-            preds_np = preds.cpu().numpy()
+            preds_np = preds.cpu().numpy().flatten()
             preds_np = np.clip(preds_np, 0.01, None)
 
-        rmse = compute_rmse(y_test, preds_np)
-        mape = compute_mape(y_test, preds_np)
+        rmse = compute_rmse(y_test.flatten(), preds_np)
+        mape = compute_mape(y_test.flatten(), preds_np)
 
         return float(loss), float(rmse), float(mape), preds_np
 

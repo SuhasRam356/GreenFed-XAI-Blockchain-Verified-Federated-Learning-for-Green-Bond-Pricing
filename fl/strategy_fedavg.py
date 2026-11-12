@@ -332,16 +332,16 @@ class GreenFedAvgStrategy(FedAvg):
         self.eval_model.eval()
 
         X_t = torch.tensor(X_eval, dtype=torch.float32, device=self.device)
-        y_t = torch.tensor(y_eval, dtype=torch.float32, device=self.device)
+        y_t = torch.tensor(y_eval, dtype=torch.float32, device=self.device).view(-1)
 
         with torch.no_grad():
             preds = self.eval_model(X_t)
             loss = self.criterion(preds, y_t).item()
-            preds_np = preds.cpu().numpy()
+            preds_np = preds.cpu().numpy().flatten()
             preds_np = np.clip(preds_np, 0.01, None)
 
-        rmse = compute_rmse(y_eval, preds_np)
-        mape = compute_mape(y_eval, preds_np)
+        rmse = compute_rmse(y_eval.flatten(), preds_np)
+        mape = compute_mape(y_eval.flatten(), preds_np)
 
         return float(loss), float(rmse), float(mape)
 

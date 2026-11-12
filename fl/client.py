@@ -267,7 +267,8 @@ class GreenBondFlowerClient(NumPyClient):
 
                 optimizer.zero_grad()
                 preds = self.model(X_b)
-                loss = self.criterion(preds, y_b)
+                y_target = y_b.view(-1)
+                loss = self.criterion(preds, y_target)
                 loss.backward()
                 optimizer.step()
 
@@ -345,7 +346,8 @@ class GreenBondFlowerClient(NumPyClient):
                 y_b = y_b.to(self.device)
 
                 preds = self.model(X_b)
-                loss = self.criterion(preds, y_b)
+                y_target = y_b.view(-1)
+                loss = self.criterion(preds, y_target)
                 total_loss += loss.item() * len(X_b)
 
                 all_preds.append(preds.cpu().numpy())

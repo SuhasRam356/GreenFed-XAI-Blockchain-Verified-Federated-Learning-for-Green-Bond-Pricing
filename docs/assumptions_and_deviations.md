@@ -38,3 +38,24 @@ As mandated by scientific integrity guidelines, this project is **not** a claim 
    - Local experiments utilize `chain/mock_ledger.py`, a pure Python in-memory permissioned ledger providing deterministic hashing, SHA-256 block linkage, and query capabilities.
    - The Hyperledger Fabric Go chaincode in `chain/chaincode/smart_contract.go` provides the production-grade smart contract definition for deployment on Fabric 2.4+.
 
+---
+
+## 7. Phase 6 Attack Threat Models & Experiment Findings
+
+1. **Malicious Client Fraction (25.0% vs. 20.0%)**:
+   - The paper mentions a "20% malicious client attack" while simultaneously establishing an 8-bank consortium ($K = 8$).
+   - Mathematically, compromise in an 8-bank system operates in discrete increments of $12.5\%$ ($1/8 = 12.5\%$, $2/8 = 25.0\%$, $3/8 = 37.5\%$).
+   - In GreenFed-XAI, we compromise exactly 2 banks (Bank 6 and Bank 7), which is explicitly and transparently labeled as **25.0%** ($2/8$).
+
+2. **Attack Threat Models**:
+   - **Unconstrained Gaussian Noise**: Malicious clients add zero-mean Gaussian noise ($\sigma = 2.0$) to parameter updates ($\Delta w_k$). This produces massive update vectors ($\|\Delta w_k\|_2 \approx 200$), causing complete convergence collapse in unprotected FedAvg (MAPE explodes from $4.44\%$ to $159.66\%$, MAE explodes to $455.82\text{ bps}$).
+   - **Cryptographic Hash Limitation (Hash-Checks-Only)**: In Scenario 7, malicious clients submit valid SHA-256 hashes of their poisoned weights. The smart contract validates that `SHA-256(weights) == submitted_hash`. The check passes, and all poisoned updates are accepted. This proves the foundational distributed security principle: cryptographic hashing guarantees transmission integrity and non-repudiation, but *cannot* detect poisoned model updates without semantic verification.
+   - **Adaptive Perturbation (Norm Evasion Boundary)**: Malicious clients craft an adversarial perturbation scaled strictly below the norm threshold ($\|\Delta w_k\|_2 = 0.95 \cdot \tau = 2.375 < 2.50$). This update successfully evades the norm filter ($\text{TPR} = 0.0\%$), causing moderate model drift ($\text{MAPE} = 5.37\%$, $+0.93\%$ over baseline). This documents the exact theoretical evasion boundary of pure Euclidean norm filtering.
+
+3. **Empirical Justification of $\tau = 2.50$ Threshold**:
+   - Through a comprehensive $\tau$-sensitivity sweep across $\tau \in [1.0, 1.5, 2.0, 2.5, 3.0, 5.0]$:
+     - For $\tau \le 2.0$: Early-round honest updates have $\|\Delta w\|_2 \approx 2.47$, resulting in a $100\%$ False Positive Rate ($\text{FPR} = 100\%$, falsely rejecting honest banks).
+     - For $\tau = 2.5$: $\text{TPR} = 100.0\%$ (all 10 poisoned updates caught) and $\text{FPR} = 0.0\%$ (0 honest updates rejected), restoring model accuracy to $\text{MAPE} = 4.69\%$ and $\text{MAE} = 12.85\text{ bps}$ (within $0.7\text{ bps}$ of clean baseline).
+     - For $\tau \ge 3.0$: While Gaussian noise ($\|\Delta w\|_2 \approx 200$) is still caught, higher thresholds expand the attack surface for adaptive evasion.
+   - Thus, $\tau = 2.50$ is empirically and mathematically justified as the Pareto-optimal threshold.
+

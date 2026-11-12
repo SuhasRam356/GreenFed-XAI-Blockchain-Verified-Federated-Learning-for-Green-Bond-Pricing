@@ -180,6 +180,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
         model_template: Optional[GreenBondNN] = None,
         device: Optional[torch.device] = None,
         tau: float = 2.5,
+        enforce_norm: bool = True,
         mining_difficulty: int = 2,
         max_transactions_per_block: int = 10,
         fraction_fit: float = 1.0,
@@ -222,6 +223,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
         # ---------------------------------------------------------------
 
         self.tau = tau
+        self.enforce_norm = enforce_norm
 
         self.blockchain = MockBlockchain(
             mining_difficulty=mining_difficulty,
@@ -231,6 +233,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
         self.smart_contract = SmartContract(
             blockchain=self.blockchain,
             tau=self.tau,
+            enforce_norm=self.enforce_norm,
         )
 
         # ---------------------------------------------------------------
@@ -308,7 +311,7 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
         for client_proxy, fit_res in results:
             # Extract client metadata
             client_id = int(fit_res.metrics.get("client_id", -1))
-            grad_norm = float(fit_res.metrics.get("grad_norm", 0.0))
+            grad_norm = float(fit_res.metrics.get("update_norm", fit_res.metrics.get("grad_norm", 0.0)))
             grad_norms[client_id] = grad_norm
 
             # ----------------------------------------------------------

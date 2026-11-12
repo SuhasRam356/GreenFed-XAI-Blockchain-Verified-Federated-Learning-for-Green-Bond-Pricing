@@ -856,15 +856,19 @@ class SmartContract:
         self,
         blockchain: MockBlockchain,
         tau: float = 2.5,
+        enforce_norm: bool = True,
     ) -> None:
         """Initialize the smart contract with blockchain and threshold.
 
         Args:
             blockchain: The mock blockchain ledger for transaction recording.
             tau: Gradient norm threshold τ (paper default: 2.5).
+            enforce_norm: If True, enforce ||Δw||_2 <= tau. If False (hash-only mode),
+                norm checks always pass, isolating hash integrity testing.
         """
         self.blockchain = blockchain
         self.tau = tau
+        self.enforce_norm = enforce_norm
 
         # In-memory hash index: {round_idx: {client_id: submitted_hash}}
         self.submitted_hashes: Dict[int, Dict[int, str]] = {}
@@ -1057,6 +1061,9 @@ class SmartContract:
         Returns:
             True if grad_norm ≤ τ (update is acceptable).
         """
+        if not self.enforce_norm:
+            return True
+
         threshold = tau if tau is not None else self.tau
         is_valid = grad_norm <= threshold
 
