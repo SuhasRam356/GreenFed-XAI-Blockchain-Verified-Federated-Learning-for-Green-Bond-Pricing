@@ -1,93 +1,77 @@
 """
-Phase 1c — Oracle Validator
-============================
+Phase 2 (Master Plan) — Oracle Validator with Fallback & Rate Tracking
+=====================================================================
 
 Simulates the blockchain smart contract's oracle validation logic.
-A reading is **rejected** if:
+A sensor reading is **rejected** if:
+  1. Jump check: |Ct − C(t−1)| > θ (threshold θ = 15 points),
+     representing physically impossible carbon score variations.
+  2. Certificate check: sensor certificate is expired or invalid.
 
-  1. |Ct − C(t−1)| > θ  (threshold ≈ 15 points)  — physically impossible
-     sudden jump in carbon footprint score.
-  2. The sensor certificate has expired (simulated by random expiry dates).
+Fallback Strategy:
+-------------------
+When a reading is rejected by the smart oracle gate, the system applies
+a robust **forward-fill policy**: the last verified valid carbon score
+is substituted for downstream bond pricing aggregation, preventing missing
+values from crashing the predictive pipeline.
 
-This mirrors the paper's description:
-    "The oracle smart contract rejects a data reading if the absolute
-     change |Ct − Ct−1| exceeds a threshold θ (indicating a physically
-     impossible sudden jump) or if the sensor certificate has expired."
+Metrics & Confusion Matrix:
+----------------------------
+Reports exact confusion matrix values with explicit denominators:
+  - Malicious Detection Rate = Detected Malicious / Total Malicious
+  - Honest False Rejection Rate = Rejected Honest / Total Honest
 
 Usage:
-    python iot/oracle_validator.py
     python iot/oracle_validator.py --sensor-file outputs/sensor_readings.csv
 """
 
+from __future__ import annotations
+
 import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
 
-
-# ---------------------------------------------------------------------------
 # Constants
-# ---------------------------------------------------------------------------
-
 RANDOM_SEED = 42
-THRESHOLD_THETA = 15.0   # max allowed change per hour in carbon score
-
-# Certificate expiry: simulate that some sensors have expired certs
-CERT_EXPIRY_FRACTION = 0.03  # 3 % of sensors have expired certificates
-
-# Validation start time (readings before this are considered "first reading")
+THRESHOLD_THETA = 15.0
+CERT_EXPIRY_FRACTION = 0.03
 VALIDATION_START = "2025-01-01T00:00:00"
 
 
-# ---------------------------------------------------------------------------
-# Validator
-# ---------------------------------------------------------------------------
-
 class OracleValidator:
-    """Simulates the blockchain oracle validation smart contract.
-
-    Validates IoT sensor readings by checking:
-      1. Carbon score change threshold (|ΔCt| ≤ θ).
-      2. Sensor certificate validity.
-
-    Parameters
-    ----------
-    theta : float
-        Maximum allowed absolute change in carbon footprint score
-        between consecutive hourly readings for the same sensor.
-    expired_sensors : set[int] | None
-        Set of sensor IDs whose certificates have expired. If None,
-        a random 3% of sensors are marked as expired.
-    """
+    """Simulates the blockchain oracle validation smart contract."""
 
     def __init__(
         self,
         theta: float = THRESHOLD_THETA,
-        expired_sensors: set | None = None,
+        expired_sensors: Optional[Set[int]] = None,
         n_sensors: int = 500,
         seed: int = RANDOM_SEED,
-    ):
+    ) -> None:
         self.theta = theta
 
         if expired_sensors is not None:
             self.expired_sensors = expired_sensors
         else:
-            rng = np.random.default_rng(seed + 1000)  # different from simulator
+            rng = np.random.default_rng(seed + 1000)
             n_expired = int(np.ceil(n_sensors * CERT_EXPIRY_FRACTION))
             self.expired_sensors = set(
                 rng.choice(n_sensors, size=n_expired, replace=False)
             )
 
-        # Store last known carbon score per sensor for threshold checking
-        self._last_score: dict[int, float] = {}
+        # Track last verified valid carbon score per sensor for jump check and fallback
+        self._last_score: Dict[int, float] = {}
 
     def validate_reading(
         self,
         sensor_id: int,
         carbon_score: float,
-    ) -> tuple[bool, str]:
+        return_fallback: bool = False,
+    ) -> tuple[bool, str] | tuple[bool, str, float]:
         """Validate a single sensor reading.
 
         Parameters
@@ -95,188 +79,157 @@ class OracleValidator:
         sensor_id : int
         carbon_score : float
             The reported carbon footprint score (0–100).
+        return_fallback : bool
+            If True, returns (is_valid, reason, mitigated_value)
 
         Returns
         -------
-        tuple[bool, str]
-            (is_valid, reason) — ``True`` if accepted, ``False`` if rejected.
+        tuple[bool, str] or tuple[bool, str, float]
         """
         # Check 1: certificate expiry
         if sensor_id in self.expired_sensors:
+            fallback = self._last_score.get(sensor_id, carbon_score)
+            if return_fallback:
+                return False, "EXPIRED_CERTIFICATE", fallback
             return False, "EXPIRED_CERTIFICATE"
 
         # Check 2: threshold check (skip for first reading of this sensor)
         if sensor_id in self._last_score:
             delta = abs(carbon_score - self._last_score[sensor_id])
             if delta > self.theta:
+                fallback = self._last_score[sensor_id]
+                if return_fallback:
+                    return False, f"THRESHOLD_EXCEEDED (|ΔCt|={delta:.2f} > θ={self.theta})", fallback
                 return False, f"THRESHOLD_EXCEEDED (|ΔCt|={delta:.2f} > θ={self.theta})"
 
         # Passed all checks — update last score
         self._last_score[sensor_id] = carbon_score
+        if return_fallback:
+            return True, "ACCEPTED", carbon_score
         return True, "ACCEPTED"
 
     def validate_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Validate every reading in a DataFrame (must be sorted by time).
+        """Validate an entire sensor telemetry dataframe in chronological order.
 
-        Adds columns ``is_valid`` and ``rejection_reason`` to *df*.
-
-        Parameters
-        ----------
-        df : pd.DataFrame
-            Must contain columns: sensor_id, carbon_score_reported, hour.
-            Must be sorted by (sensor_id, hour) or at least chronologically.
-
-        Returns
-        -------
-        pd.DataFrame
-            The input DataFrame with two new columns.
+        Appends columns:
+          - is_valid: bool
+          - rejection_reason: str
+          - carbon_score_mitigated: float (with forward-fill fallback)
         """
-        # Reset state
         self._last_score = {}
-
-        # Sort by sensor_id and hour for correct sequential validation
         df_sorted = df.sort_values(["sensor_id", "hour"]).reset_index(drop=True)
 
         valid_flags = []
         reasons = []
+        mitigated_scores = []
 
         for _, row in df_sorted.iterrows():
-            is_valid, reason = self.validate_reading(
+            res = self.validate_reading(
                 sensor_id=int(row["sensor_id"]),
                 carbon_score=float(row["carbon_score_reported"]),
+                return_fallback=True,
             )
+            is_valid, reason, mitigated = res
             valid_flags.append(is_valid)
             reasons.append(reason)
+            mitigated_scores.append(round(mitigated, 2))
 
         df_sorted["is_valid"] = valid_flags
         df_sorted["rejection_reason"] = reasons
+        df_sorted["carbon_score_mitigated"] = mitigated_scores
 
         return df_sorted
 
 
 def generate_validation_report(df: pd.DataFrame) -> str:
-    """Generate a human-readable validation report.
+    """Generate structured audit report with rates and denominators."""
+    total_readings = len(df)
+    n_valid = int(df["is_valid"].sum())
+    n_rejected = total_readings - n_valid
 
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Output of ``OracleValidator.validate_dataframe``.
+    reasons = df[~df["is_valid"]]["rejection_reason"].value_counts()
+    cert_expired = sum(1 for r in df["rejection_reason"] if "EXPIRED" in r)
+    threshold_exceeded = sum(1 for r in df["rejection_reason"] if "THRESHOLD" in r)
 
-    Returns
-    -------
-    str
-        Multi-line report string.
-    """
-    total = len(df)
-    accepted = df["is_valid"].sum()
-    rejected = total - accepted
+    # Calculate honest vs malicious rates if labels present
+    has_labels = "is_malicious" in df.columns
+    attack_metrics = ""
+    if has_labels:
+        total_malicious = int(df["is_malicious"].sum())
+        total_honest = total_readings - total_malicious
 
-    lines = [
-        "=" * 60,
-        "  Oracle Validation Report",
-        "=" * 60,
-        f"  Total readings     : {total:,}",
-        f"  Accepted           : {accepted:,}  ({100*accepted/total:.2f}%)",
-        f"  Rejected           : {rejected:,}  ({100*rejected/total:.2f}%)",
-        "",
-    ]
+        mal_rejected = int(((df["is_malicious"]) & (~df["is_valid"])).sum())
+        honest_rejected = int(((~df["is_malicious"]) & (~df["is_valid"])).sum())
 
-    # Break down by rejection reason
-    if rejected > 0:
-        lines.append("  Rejection breakdown:")
-        reason_counts = (
-            df.loc[~df["is_valid"], "rejection_reason"]
-            .apply(lambda r: r.split(" (")[0])  # group threshold reasons
-            .value_counts()
-        )
-        for reason, count in reason_counts.items():
-            lines.append(f"    {reason:30s} : {count:,}")
-        lines.append("")
+        detection_rate = (mal_rejected / total_malicious * 100.0) if total_malicious > 0 else 0.0
+        false_positive_rate = (honest_rejected / total_honest * 100.0) if total_honest > 0 else 0.0
 
-    # Malicious sensor cross-analysis (if column present)
-    if "is_malicious" in df.columns:
-        mal_readings = df[df["is_malicious"]]
-        hon_readings = df[~df["is_malicious"]]
+        attack_metrics = f"""
+  Adversarial Telemetry & Evaluation Rates:
+    Total Malicious Telemetry Readings: {total_malicious:,}
+    Malicious Readings Detected & Blocked: {mal_rejected:,}
+    Malicious Detection Rate: {detection_rate:.2f}% ({mal_rejected}/{total_malicious})
 
-        mal_rejected = (~mal_readings["is_valid"]).sum()
-        hon_rejected = (~hon_readings["is_valid"]).sum()
+    Total Honest Telemetry Readings: {total_honest:,}
+    Honest Readings Rejected (False Positives): {honest_rejected:,}
+    Honest False Rejection Rate: {false_positive_rate:.2f}% ({honest_rejected}/{total_honest})
+"""
 
-        lines.extend([
-            "  Cross-analysis with malicious flag:",
-            f"    Malicious readings total    : {len(mal_readings):,}",
-            f"    Malicious readings rejected : {mal_rejected:,}  "
-            f"({100*mal_rejected/max(len(mal_readings),1):.2f}%)",
-            f"    Honest readings total       : {len(hon_readings):,}",
-            f"    Honest readings rejected    : {hon_rejected:,}  "
-            f"({100*hon_rejected/max(len(hon_readings),1):.2f}%)",
-            "",
-        ])
+    report = f"""======================================================================
+  ORACLE SMART CONTRACT VALIDATION REPORT
+======================================================================
+  Total readings processed : {total_readings:,}
+  Valid readings accepted  : {n_valid:,} ({100.0 * n_valid / total_readings:.2f}%)
+  Invalid readings rejected: {n_rejected:,} ({100.0 * n_rejected / total_readings:.2f}%)
+  Accepted                 : {n_valid:,}
+  Rejected                 : {n_rejected:,}
 
-    return "\n".join(lines)
+  Rejection Categorization:
+    - Expired Certificates : {cert_expired:,}
+    - Threshold Jumps (>θ) : {threshold_exceeded:,}
+{attack_metrics}
+  Malicious readings cross-analysis:
+    Total malicious: {df['is_malicious'].sum() if has_labels else 0}
+
+  Mitigation Policy:
+    Rejected readings are safely forward-filled from the last verified
+    valid observation, preventing telemetry gaps in bond spread pricing.
+======================================================================"""
+    return report
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Validate IoT sensor readings using oracle logic"
-    )
-    parser.add_argument(
-        "--sensor-file", type=str, default=None,
-        help="Path to sensor_readings.csv (default: outputs/sensor_readings.csv)"
-    )
-    parser.add_argument("--theta", type=float, default=THRESHOLD_THETA)
-    parser.add_argument("--out-dir", type=str, default=None)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Validate IoT sensor telemetry stream")
+    parser.add_argument("--sensor-file", type=str, default="outputs/sensor_readings.csv", help="Input sensor CSV")
+    parser.add_argument("--out-dir", type=str, default="outputs", help="Output directory")
+    parser.add_argument("--theta", type=float, default=THRESHOLD_THETA, help="Jump threshold θ")
     args = parser.parse_args()
 
-    project_root = Path(__file__).resolve().parent.parent
-
-    if args.sensor_file:
-        sensor_path = Path(args.sensor_file)
-    else:
-        sensor_path = project_root / "outputs" / "sensor_readings.csv"
-
-    if args.out_dir:
-        out_dir = Path(args.out_dir)
-    else:
-        out_dir = project_root / "outputs"
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+    sensor_path = Path(args.sensor_file)
     if not sensor_path.exists():
-        print(f"Error: sensor file not found at {sensor_path}")
-        print("Run iot/simulate_sensors.py first to generate sensor data.")
+        print(f"Error: Sensor file '{sensor_path}' not found. Run iot/simulate_sensors.py first.")
         return
 
-    print(f"Loading sensor readings from {sensor_path} …")
     df = pd.read_csv(sensor_path)
-    print(f"  Loaded {len(df):,} readings.")
+    validator = OracleValidator(theta=args.theta)
+    df_val = validator.validate_dataframe(df)
 
-    n_sensors = df["sensor_id"].nunique()
-    validator = OracleValidator(theta=args.theta, n_sensors=n_sensors)
-    print(f"  Expired sensor certificates: {sorted(validator.expired_sensors)}")
-    print(f"  Threshold θ = {args.theta}")
-    print()
-
-    print("Validating readings …")
-    df_validated = validator.validate_dataframe(df)
-
-    report = generate_validation_report(df_validated)
+    report = generate_validation_report(df_val)
     print(report)
 
-    # Save validated readings
-    out_path = out_dir / "sensor_readings_validated.csv"
-    df_validated.to_csv(out_path, index=False)
-    print(f"Saved validated readings → {out_path}")
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save validation report
+    val_csv_path = out_dir / "sensor_readings_validated.csv"
+    df_val.to_csv(val_csv_path, index=False)
+
     report_path = out_dir / "validation_report.txt"
-    with open(report_path, "w") as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         f.write(report)
-    print(f"Saved validation report  → {report_path}")
+
+    print(f"\nSaved validated sensor data -> {val_csv_path}")
+    print(f"Saved validation audit report -> {report_path}")
 
 
 if __name__ == "__main__":
     main()
-

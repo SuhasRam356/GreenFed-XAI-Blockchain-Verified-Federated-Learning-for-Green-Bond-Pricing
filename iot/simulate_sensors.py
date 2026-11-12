@@ -1,122 +1,143 @@
 """
-Phase 1b — IoT Sensor Simulator
-================================
+Phase 2 (Master Plan) — IoT Sensor Simulation
+==============================================
 
-Simulates 500 virtual IoT sensors deployed at green-bond project sites.
-Each sensor produces one CO₂e reading per hour.
+Simulates IoT carbon telemetry streams at green bond project sites,
+distinguishing between:
+  1. Latent ground-truth emissions (Et_true).
+  2. Latent ground-truth carbon footprint score (Ct_true).
+  3. Observed noisy emissions reading (Et_observed).
+  4. Observed carbon footprint score (Ct_observed).
+  5. Malicious sensor telemetry with greenwashing bias.
 
-Key characteristics (from the paper):
-  - 500 sensors, 1 reading/hour
-  - 5 % Gaussian sensor error on each reading
-  - 5 % of sensors are *malicious* and inject a +20 % positive bias
+Mathematical Formulation:
+--------------------------
+For a project site with baseline emission factor E_max (kg CO₂e / kWh):
+    Ct_true = 100 × (E_max − Et_true) / E_max
 
-The carbon footprint score is computed as:
-    Ct = 100 × (Emax − Et) / Emax
+Sensors exhibit 5% Gaussian measurement error:
+    Et_noisy = Et_true + N(0, (0.05 × Et_true)²)
 
-where Et is the current emission rate (kg CO₂e / kWh) and Emax is a
-project-type baseline.
+Malicious sensors (5% of total sensor fleet) inject a greenwashing bias
+(reporting emissions 20% lower than reality):
+    Et_reported = Et_noisy × (1 − 0.20)
+    Ct_reported = 100 × (E_max − Et_reported) / E_max
+
+This separation allows the evaluation protocol to test the impact of
+unmitigated sensor corruption on ground-truth bond pricing targets.
 
 Usage:
-    python iot/simulate_sensors.py
     python iot/simulate_sensors.py --n-sensors 500 --hours 720 --out-dir outputs/
 """
 
+from __future__ import annotations
+
 import argparse
-import os
 import sys
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
 
 import numpy as np
 import pandas as pd
 
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
+# Default parameters
 RANDOM_SEED = 42
 N_SENSORS = 500
 N_HOURS = 720  # 30 days × 24 hours
-MALICIOUS_FRACTION = 0.05   # 5 % of sensors
-MALICIOUS_BIAS = 0.20       # +20 % positive bias
-SENSOR_ERROR_STD = 0.05     # 5 % sensor error
-EMAX = 1.0                  # baseline emission rate (kg CO₂e / kWh)
-
-# Simulate slowly-varying true emission rates per sensor
-# (each sensor is at a different project site)
-EMISSION_RATE_RANGE = (0.05, 0.95)  # Et ∈ [0.05, 0.95] × Emax
-
-# Hourly drift: tiny random walk so readings aren't static
+MALICIOUS_FRACTION = 0.05   # 5% of sensors are compromised
+MALICIOUS_BIAS = 0.20       # 20% reduction in reported emissions (greenwashing)
+SENSOR_ERROR_STD = 0.05     # 5% Gaussian measurement noise
+EMAX = 1.0                  # Baseline benchmark emission factor (kg CO₂e / kWh)
+EMISSION_RATE_RANGE = (0.05, 0.95)
 HOURLY_DRIFT_STD = 0.005
 
 
-# ---------------------------------------------------------------------------
-# Simulator
-# ---------------------------------------------------------------------------
+def compute_carbon_score(emission_rate: float, e_max: float = EMAX) -> float:
+    """Compute carbon footprint score Ct in range [0, 100].
+
+    Parameters:
+    -----------
+    emission_rate : float
+        Carbon emission intensity (kg CO₂e / kWh).
+    e_max : float
+        Project-specific benchmark emission baseline.
+
+    Returns:
+    --------
+    float
+        Carbon footprint score between 0.0 (dirtiest) and 100.0 (cleanest).
+    """
+    score = 100.0 * (e_max - emission_rate) / e_max
+    return float(np.clip(score, 0.0, 100.0))
+
 
 def simulate_sensors(
     n_sensors: int = N_SENSORS,
     n_hours: int = N_HOURS,
     seed: int = RANDOM_SEED,
 ) -> pd.DataFrame:
-    """Simulate IoT sensor readings.
+    """Simulate IoT sensor telemetry distinguishing latent ground-truth from observations.
 
-    Returns
-    -------
+    Parameters:
+    -----------
+    n_sensors : int
+        Total number of project IoT monitoring devices (default: 500).
+    n_hours : int
+        Number of hourly observation time-steps (default: 720 = 30 days).
+    seed : int
+        Random seed for full reproducibility.
+
+    Returns:
+    --------
     pd.DataFrame
-        Columns: sensor_id, timestamp, emission_rate, carbon_footprint_score,
-                 is_malicious, reading_raw, reading_reported.
+        Hourly telemetry dataset with latent state and observed readings.
     """
     rng = np.random.default_rng(seed)
 
-    # Assign malicious flag
+    # Designate compromised malicious sensors (5% fleet fraction)
     n_malicious = int(np.ceil(n_sensors * MALICIOUS_FRACTION))
-    malicious_ids = set(rng.choice(n_sensors, size=n_malicious, replace=False))
+    malicious_ids: Set[int] = set(
+        rng.choice(n_sensors, size=n_malicious, replace=False)
+    )
 
-    records = []
+    records: List[Dict[str, object]] = []
     start_time = datetime(2025, 1, 1, 0, 0, 0)
 
-    # Initialise true emission rates per sensor
-    true_rates = rng.uniform(
+    # Initial latent ground-truth emission rates
+    latent_true_rates = rng.uniform(
         EMISSION_RATE_RANGE[0], EMISSION_RATE_RANGE[1], size=n_sensors
     )
 
     for hour in range(n_hours):
         timestamp = start_time + timedelta(hours=hour)
 
-        # Apply small random walk to emission rates (clipped to valid range)
+        # Latent true emissions random walk drift
         drift = rng.normal(0, HOURLY_DRIFT_STD, size=n_sensors)
-        true_rates = np.clip(
-            true_rates + drift,
+        latent_true_rates = np.clip(
+            latent_true_rates + drift,
             EMISSION_RATE_RANGE[0],
             EMISSION_RATE_RANGE[1],
         )
 
         for sid in range(n_sensors):
             is_mal = sid in malicious_ids
+            et_true = float(latent_true_rates[sid])
+            ct_true = compute_carbon_score(et_true, EMAX)
 
-            # True emission reading
-            et_true = true_rates[sid]
+            # Natural sensor measurement error (5% Gaussian std)
+            noise = float(rng.normal(0, SENSOR_ERROR_STD * et_true))
+            et_noisy = max(0.001, et_true + noise)
 
-            # Add sensor error (5 % Gaussian noise)
-            sensor_noise = rng.normal(0, SENSOR_ERROR_STD * et_true)
-            et_noisy = et_true + sensor_noise
-
-            # Malicious sensors add +20 % bias (making emissions look LOWER
-            # → carbon score artificially HIGHER to enable greenwashing)
+            # Adversarial manipulation: malicious sensors report lower emissions
             if is_mal:
-                et_reported = et_noisy * (1 - MALICIOUS_BIAS)
+                et_reported = max(0.001, et_noisy * (1.0 - MALICIOUS_BIAS))
+                is_attacked = True
             else:
                 et_reported = et_noisy
+                is_attacked = False
 
-            # Clip to valid range
-            et_reported = np.clip(et_reported, 0.001, EMAX)
-            et_noisy = np.clip(et_noisy, 0.001, EMAX)
-
-            # Compute carbon footprint scores
-            ct_raw = 100 * (EMAX - et_noisy) / EMAX
-            ct_reported = 100 * (EMAX - et_reported) / EMAX
+            ct_reported = compute_carbon_score(et_reported, EMAX)
 
             records.append({
                 "sensor_id": sid,
@@ -124,79 +145,59 @@ def simulate_sensors(
                 "hour": hour,
                 "emission_rate_true": round(et_true, 6),
                 "emission_rate_reported": round(et_reported, 6),
-                "carbon_score_raw": round(ct_raw, 2),
+                "carbon_score_raw": round(compute_carbon_score(et_noisy, EMAX), 2),
                 "carbon_score_reported": round(ct_reported, 2),
                 "is_malicious": is_mal,
             })
 
-    df = pd.DataFrame(records)
-    return df
+    return pd.DataFrame(records)
 
 
-def print_summary(df: pd.DataFrame):
-    """Print statistics about the simulated sensor data."""
+def print_summary(df: pd.DataFrame) -> None:
+    """Print structured summary of latent vs reported sensor statistics."""
     n_sensors = df["sensor_id"].nunique()
     n_hours = df["hour"].nunique()
     n_mal = df.loc[df["is_malicious"], "sensor_id"].nunique()
 
-    print(f"\n{'='*60}")
-    print(f"  IoT Sensor Simulation Summary")
-    print(f"{'='*60}")
-    print(f"  Total sensors      : {n_sensors}")
-    print(f"  Malicious sensors  : {n_mal} ({100*n_mal/n_sensors:.1f}%)")
-    print(f"  Honest sensors     : {n_sensors - n_mal}")
-    print(f"  Hours simulated    : {n_hours}")
-    print(f"  Total readings     : {len(df):,}")
-    print()
-    print("  Carbon score (reported) statistics:")
-    print(f"    Mean  : {df['carbon_score_reported'].mean():.2f}")
-    print(f"    Std   : {df['carbon_score_reported'].std():.2f}")
-    print(f"    Min   : {df['carbon_score_reported'].min():.2f}")
-    print(f"    Max   : {df['carbon_score_reported'].max():.2f}")
-    print()
+    print(f"\n{'='*70}")
+    print("  IOT CARBON SENSOR SIMULATION SUMMARY")
+    print(f"{'='*70}")
+    print(f"  Total Active Sensors     : {n_sensors}")
+    print(f"  Malicious Sensors        : {n_mal} ({100.0 * n_mal / n_sensors:.1f}%)")
+    print(f"  Honest Sensors           : {n_sensors - n_mal}")
+    print(f"  Total Hourly Time-Steps  : {n_hours} hours")
+    print(f"  Total Telemetry Records  : {len(df):,}")
+    print("-" * 70)
 
-    # Compare malicious vs honest carbon scores
-    mal_scores = df.loc[df["is_malicious"], "carbon_score_reported"]
-    hon_scores = df.loc[~df["is_malicious"], "carbon_score_reported"]
-    print(f"  Malicious avg carbon score : {mal_scores.mean():.2f}")
-    print(f"  Honest avg carbon score    : {hon_scores.mean():.2f}")
-    print(f"  Bias difference            : {mal_scores.mean() - hon_scores.mean():.2f} points")
-    print()
+    hon_df = df[~df["is_malicious"]]
+    mal_df = df[df["is_malicious"]]
+
+    print(f"  Honest Reported Score Ct : Mean = {hon_df['carbon_score_reported'].mean():.2f}, Std = {hon_df['carbon_score_reported'].std():.2f}")
+    ct_true_mean = 100.0 * (EMAX - mal_df['emission_rate_true'].mean()) / EMAX
+    inflation = mal_df['carbon_score_reported'].mean() - ct_true_mean
+    print(f"  Malicious Reported Ct    : Mean = {mal_df['carbon_score_reported'].mean():.2f} (Greenwashing inflation: +{inflation:.2f} pts)")
+    print(f"{'='*70}\n")
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Simulate IoT sensor readings for green bond projects"
-    )
-    parser.add_argument("--n-sensors", type=int, default=N_SENSORS)
-    parser.add_argument("--hours", type=int, default=N_HOURS)
-    parser.add_argument("--seed", type=int, default=RANDOM_SEED)
-    parser.add_argument("--out-dir", type=str, default=None)
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Generate IoT sensor carbon telemetry")
+    parser.add_argument("--n-sensors", type=int, default=N_SENSORS, help="Number of virtual sensors")
+    parser.add_argument("--hours", type=int, default=N_HOURS, help="Number of simulation hours")
+    parser.add_argument("--seed", type=int, default=RANDOM_SEED, help="Random seed")
+    parser.add_argument("--out-dir", type=str, default="outputs", help="Output directory")
     args = parser.parse_args()
 
-    if args.out_dir:
-        out_dir = Path(args.out_dir)
-    else:
-        out_dir = Path(__file__).resolve().parent.parent / "outputs"
+    out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Simulating IoT sensors …")
-    df = simulate_sensors(
-        n_sensors=args.n_sensors,
-        n_hours=args.hours,
-        seed=args.seed,
-    )
+    print(f"Simulating {args.n_sensors} sensors over {args.hours} hours...")
+    df = simulate_sensors(n_sensors=args.n_sensors, n_hours=args.hours, seed=args.seed)
     print_summary(df)
 
     out_path = out_dir / "sensor_readings.csv"
     df.to_csv(out_path, index=False)
-    print(f"Saved sensor readings → {out_path}  ({len(df):,} rows)")
+    print(f"Saved sensor telemetry dataset -> {out_path} ({len(df):,} records)")
 
 
 if __name__ == "__main__":
     main()
-
