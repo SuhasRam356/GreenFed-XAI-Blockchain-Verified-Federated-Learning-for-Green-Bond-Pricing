@@ -78,8 +78,16 @@ class RoundConvergenceMetrics:
     val_loss: float
     val_rmse: float
     val_mape: float
-    avg_grad_norm: float
-    client_grad_norms: Dict[int, float] = field(default_factory=dict)
+    avg_update_norm: float
+    client_update_norms: Dict[int, float] = field(default_factory=dict)
+    # Alias for backward compatibility
+    @property
+    def avg_grad_norm(self) -> float:
+        return self.avg_update_norm
+
+    @property
+    def client_grad_norms(self) -> Dict[int, float]:
+        return self.client_update_norms
 
 
 class GreenFedAvgStrategy(FedAvg):
@@ -109,6 +117,7 @@ class GreenFedAvgStrategy(FedAvg):
         eval_dataset: Optional[Tuple[np.ndarray, np.ndarray]] = None,
         model_template: Optional[GreenBondNN] = None,
         device: Optional[torch.device] = None,
+        aggregation: str = "weighted",
         fraction_fit: float = 1.0,
         min_fit_clients: int = 8,
         min_available_clients: int = 8,
@@ -124,6 +133,9 @@ class GreenFedAvgStrategy(FedAvg):
         )
 
         self.eval_dataset = eval_dataset
+        self.aggregation = aggregation.lower()
+        if self.aggregation not in {"weighted", "equal"}:
+            raise ValueError(f"Unknown aggregation mode: {aggregation}. Use 'weighted' or 'equal'.")
         self.device = (
             device
             if device is not None
@@ -241,13 +253,17 @@ class GreenFedAvgStrategy(FedAvg):
         weighted_train_loss /= max(1, total_samples)
         avg_grad_norm = float(np.mean(list(grad_norms.values()))) if grad_norms else 0.0
 
-        # Weighted parameter averaging: w = \sum_k (|D_k| / |D|) * w_k
+        # Parameter averaging: sample-weighted or equal-client
         first_weights = parameters_to_ndarrays(accepted_results[0][1].parameters)
         aggregated_ndarrays = [np.zeros_like(layer) for layer in first_weights]
+        num_accepted = len(accepted_results)
 
         for _, fit_res in accepted_results:
             client_ndarrays = parameters_to_ndarrays(fit_res.parameters)
-            weight_factor = fit_res.num_examples / total_samples
+            if self.aggregation == "equal":
+                weight_factor = 1.0 / num_accepted
+            else:
+                weight_factor = fit_res.num_examples / total_samples
 
             for i, layer in enumerate(client_ndarrays):
                 aggregated_ndarrays[i] += layer * weight_factor
@@ -268,8 +284,8 @@ class GreenFedAvgStrategy(FedAvg):
             val_loss=float(val_loss),
             val_rmse=float(val_rmse),
             val_mape=float(val_mape),
-            avg_grad_norm=float(avg_grad_norm),
-            client_grad_norms=grad_norms,
+            avg_update_norm=float(avg_grad_norm),
+            client_update_norms=grad_norms,
         )
         self.history.append(metrics_record)
 
@@ -343,7 +359,8 @@ class GreenFedAvgStrategy(FedAvg):
                 "val_loss": h.val_loss,
                 "val_rmse": h.val_rmse,
                 "val_mape": h.val_mape,
-                "avg_grad_norm": h.avg_grad_norm,
+                "avg_update_norm": h.avg_update_norm,
+                "avg_grad_norm": h.avg_update_norm,  # backward compatibility
             })
         return pd.DataFrame(rows)
 

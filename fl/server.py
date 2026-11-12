@@ -177,12 +177,14 @@ class FederatedSimulationEngine:
 
             total_samples = sum(res.num_examples for _, res in accepted_results)
             new_global_weights = [np.zeros_like(w) for w in self.current_weights]
+            num_accepted = len(accepted_results)
+            is_equal_agg = getattr(self.strategy, "aggregation", "weighted") == "equal"
 
             weighted_train_loss = 0.0
             client_norms: Dict[int, float] = {}
 
             for _, res in accepted_results:
-                fraction = res.num_examples / total_samples
+                fraction = (1.0 / num_accepted) if is_equal_agg else (res.num_examples / total_samples)
                 for i, layer in enumerate(res.parameters.ndarrays):
                     new_global_weights[i] += layer * fraction
                 weighted_train_loss += (
@@ -216,8 +218,8 @@ class FederatedSimulationEngine:
                 val_loss=float(val_loss),
                 val_rmse=float(val_rmse),
                 val_mape=float(val_mape),
-                avg_grad_norm=float(avg_norm),
-                client_grad_norms=client_norms,
+                avg_update_norm=float(avg_norm),
+                client_update_norms=client_norms,
             )
             self.strategy.history.append(round_metric)
 
@@ -460,6 +462,13 @@ def main() -> None:
         help="Use Dirichlet Non-IID partitioning instead of IID",
     )
     parser.add_argument(
+        "--aggregation",
+        type=str,
+        default="weighted",
+        choices=["weighted", "equal"],
+        help="Aggregation weighting scheme: 'weighted' (sample-size proportional) or 'equal' (uniform client weighting)",
+    )
+    parser.add_argument(
         "--blockchain",
         action="store_true",
         help="Enable Phase 4 blockchain verification layer (GreenFed-XAI)",
@@ -532,25 +541,28 @@ def main() -> None:
 
     if args.blockchain:
         logger.info(
-            "Initializing BlockchainVerifiedStrategy (τ = %.2f, mock Fabric ledger)...",
+            "Initializing BlockchainVerifiedStrategy (τ = %.2f, mock Fabric ledger, agg=%s)...",
             args.tau,
+            args.aggregation,
         )
         strategy = BlockchainVerifiedStrategy(
             eval_dataset=(X_val, y_val),
             model_template=global_model,
             device=device,
             tau=args.tau,
+            aggregation=args.aggregation,
             min_fit_clients=args.clients,
             min_available_clients=args.clients,
         )
         model_name = "GreenFed-XAI (blockchain-verified)"
         prefix = "greenfed_blockchain"
     else:
-        logger.info("Initializing baseline GreenFedAvgStrategy (no blockchain)...")
+        logger.info("Initializing baseline GreenFedAvgStrategy (no blockchain, agg=%s)...", args.aggregation)
         strategy = GreenFedAvgStrategy(
             eval_dataset=(X_val, y_val),
             model_template=global_model,
             device=device,
+            aggregation=args.aggregation,
             min_fit_clients=args.clients,
             min_available_clients=args.clients,
         )
