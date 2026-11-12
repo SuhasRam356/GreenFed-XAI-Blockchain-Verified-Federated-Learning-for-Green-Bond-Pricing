@@ -46,6 +46,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from fl.client import GreenBondFlowerClient, compute_mape, compute_rmse
 from fl.dataset_partitioner import BankDatasetPartitioner, ClientDataset
+from fl.strategy_blockchain import BlockchainVerifiedStrategy
 from fl.strategy_fedavg import GreenFedAvgStrategy
 from models.nn_model import GreenBondNN
 from models.preprocessing import DataPreprocessor
@@ -162,14 +163,25 @@ class FederatedSimulationEngine:
                 )()
                 client_fit_results.append((client_proxy_mock, fit_res_mock))
 
-            # Step 3: Aggregator averages accepted weights: w_{t+1} = \\sum (|D_k| / |D|) w_k
-            total_samples = sum(res.num_examples for _, res in client_fit_results)
+            # Step 3: Aggregator filters and averages accepted weights
+            accepted_results, audit_meta = self.strategy.verify_and_filter_updates(
+                round_idx, client_fit_results
+            )
+
+            if not accepted_results:
+                logger.error(
+                    "Round %d: All updates rejected! Keeping previous round weights.",
+                    round_idx,
+                )
+                continue
+
+            total_samples = sum(res.num_examples for _, res in accepted_results)
             new_global_weights = [np.zeros_like(w) for w in self.current_weights]
 
             weighted_train_loss = 0.0
             client_norms: Dict[int, float] = {}
 
-            for _, res in client_fit_results:
+            for _, res in accepted_results:
                 fraction = res.num_examples / total_samples
                 for i, layer in enumerate(res.parameters.ndarrays):
                     new_global_weights[i] += layer * fraction
@@ -347,19 +359,20 @@ def generate_loss_curve_plot(
 
 
 def update_results_table(
-    fedavg_rmse: float,
-    fedavg_mape: float,
+    model_name: str,
+    rmse: float,
+    mape: float,
     duration: float,
     outputs_dir: Path,
 ) -> pd.DataFrame:
-    """Append the FedAvg row to the results table alongside centralized baselines."""
+    """Append or update a model row in the results table alongside baselines."""
     results_path = outputs_dir / "baseline_results.csv"
 
     if results_path.exists():
         df_results = pd.read_csv(results_path)
-        # Drop existing FedAvg entry if present to allow re-running
+        # Drop existing entry for this model if present to allow re-running
         df_results = df_results[
-            df_results["model"] != "FedAvg (no blockchain)"
+            df_results["model"] != model_name
         ].copy()
     else:
         df_results = pd.DataFrame(
@@ -368,9 +381,9 @@ def update_results_table(
 
     new_row = pd.DataFrame([
         {
-            "model": "FedAvg (no blockchain)",
-            "rmse_pct": round(fedavg_rmse, 4),
-            "mape_pct": round(fedavg_mape, 2),
+            "model": model_name,
+            "rmse_pct": round(rmse, 4),
+            "mape_pct": round(mape, 2),
             "train_time_s": round(duration, 2),
         }
     ])
@@ -446,6 +459,17 @@ def main() -> None:
         action="store_true",
         help="Use Dirichlet Non-IID partitioning instead of IID",
     )
+    parser.add_argument(
+        "--blockchain",
+        action="store_true",
+        help="Enable Phase 4 blockchain verification layer (GreenFed-XAI)",
+    )
+    parser.add_argument(
+        "--tau",
+        type=float,
+        default=2.5,
+        help="Gradient norm threshold τ for poisoning defense (default: 2.5)",
+    )
     args = parser.parse_args()
 
     data_dir = PROJECT_ROOT / "outputs"
@@ -506,13 +530,32 @@ def main() -> None:
         for cds in client_datasets
     ]
 
-    strategy = GreenFedAvgStrategy(
-        eval_dataset=(X_val, y_val),
-        model_template=global_model,
-        device=device,
-        min_fit_clients=args.clients,
-        min_available_clients=args.clients,
-    )
+    if args.blockchain:
+        logger.info(
+            "Initializing BlockchainVerifiedStrategy (τ = %.2f, mock Fabric ledger)...",
+            args.tau,
+        )
+        strategy = BlockchainVerifiedStrategy(
+            eval_dataset=(X_val, y_val),
+            model_template=global_model,
+            device=device,
+            tau=args.tau,
+            min_fit_clients=args.clients,
+            min_available_clients=args.clients,
+        )
+        model_name = "GreenFed-XAI (blockchain-verified)"
+        prefix = "greenfed_blockchain"
+    else:
+        logger.info("Initializing baseline GreenFedAvgStrategy (no blockchain)...")
+        strategy = GreenFedAvgStrategy(
+            eval_dataset=(X_val, y_val),
+            model_template=global_model,
+            device=device,
+            min_fit_clients=args.clients,
+            min_available_clients=args.clients,
+        )
+        model_name = "FedAvg (no blockchain)"
+        prefix = "fedavg"
 
     # 5. Run Federated Learning Simulation
     engine = FederatedSimulationEngine(
@@ -531,35 +574,46 @@ def main() -> None:
 
     # 6. Save Artifacts & Deliverables
     # a. Convergence history CSV
-    hist_path = outputs_dir / "fedavg_convergence.csv"
+    hist_path = outputs_dir / f"{prefix}_convergence.csv"
     strategy.save_history_csv(hist_path)
 
     # b. Loss curve plot
-    plot_path = outputs_dir / "fedavg_loss_curve.png"
+    plot_path = outputs_dir / f"{prefix}_loss_curve.png"
     generate_loss_curve_plot(results["history_df"], plot_path)
 
     # c. Final model weights
-    model_path = outputs_dir / "fedavg_model.pt"
+    model_path = outputs_dir / f"{prefix}_model.pt"
     keys = list(global_model.state_dict().keys())
     state_dict = {
         k: torch.tensor(v, dtype=torch.float32)
         for k, v in zip(keys, results["final_weights"])
     }
     torch.save(state_dict, model_path)
-    logger.info("Saved final FedAvg model weights -> %s", model_path)
+    logger.info("Saved final model weights -> %s", model_path)
 
     # d. Predictions CSV
-    preds_path = outputs_dir / "fedavg_predictions.csv"
+    preds_path = outputs_dir / f"{prefix}_predictions.csv"
     pd.DataFrame({
         "bond_id": test_df["bond_id"].values,
         "y_true": y_test,
         "y_pred": results["y_pred"],
         "absolute_error": np.abs(y_test - results["y_pred"]),
     }).to_csv(preds_path, index=False)
-    logger.info("Saved FedAvg test predictions -> %s", preds_path)
+    logger.info("Saved test predictions -> %s", preds_path)
 
-    # e. Append to Table I results
+    # e. Blockchain audit export if in blockchain mode
+    if args.blockchain and isinstance(strategy, BlockchainVerifiedStrategy):
+        audit_csv_path = outputs_dir / "blockchain_audit_history.csv"
+        strategy.save_audit_csv(audit_csv_path)
+        ledger_export_path = outputs_dir / "blockchain_ledger_dump.json"
+        with open(ledger_export_path, "w", encoding="utf-8") as f:
+            f.write(strategy.blockchain.export_chain_json())
+        logger.info("Exported full blockchain ledger -> %s", ledger_export_path)
+        strategy.print_verification_summary()
+
+    # f. Append to Table I results
     update_results_table(
+        model_name,
         results["test_rmse"],
         results["test_mape"],
         results["total_duration"],
