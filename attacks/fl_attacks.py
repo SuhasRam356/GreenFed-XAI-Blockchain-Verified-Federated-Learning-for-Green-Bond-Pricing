@@ -232,8 +232,11 @@ class MaliciousGreenBondClient(GreenBondFlowerClient):
             ]
 
         elif attack_type == AttackType.PAYLOAD_TAMPER:
-            # Emulates post-hash transmission corruption: submits one update
-            # with intentional layer perturbation
+            # Emulates post-hash transmission corruption: client commits hash of honest weights,
+            # but transmits corrupted parameter payload over the wire (tested for SHA-256 integrity)
+            from chain.mock_ledger import SmartContract
+
+            committed_hash = SmartContract.compute_parameter_hash(honest_weights)
             poisoned_weights = [w.copy() for w in honest_weights]
             if len(poisoned_weights) > 0:
                 poisoned_weights[0] = poisoned_weights[0] + 1.0
@@ -256,6 +259,8 @@ class MaliciousGreenBondClient(GreenBondFlowerClient):
             "attack_type": attack_type.value,
             "round": current_round,
         }
+        if attack_type == AttackType.PAYLOAD_TAMPER:
+            metrics["committed_hash"] = committed_hash
 
         logger.debug(
             "[Round %d] Malicious Bank %d (%s) injected '%s' | Honest Norm: %.4f | Poisoned Norm: %.4f",

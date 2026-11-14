@@ -625,10 +625,31 @@ def run_complete_experiment_matrix(
     tau: float = 2.5,
     noise_scale: float = 2.0,
     non_iid: bool = False,
+    partition: str = "iid",
     seed: int = 42,
     output_csv: Optional[Path] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Execute all benchmark scenarios and generate complete reports."""
+    """Execute all benchmark scenarios and generate complete reports.
+    
+    Parameters:
+    -----------
+    rounds : int
+        Number of global FL communication rounds.
+    quick : bool
+        If True, run rapid smoke tests (3 rounds, 1 epoch).
+    tau : float
+        Norm threshold τ for poisoning defense (default: 2.5).
+    noise_scale : float
+        Standard deviation σ of Gaussian noise attack (default: 2.0).
+    non_iid : bool
+        Legacy convenience flag; if True and partition='iid', sets partition='dirichlet'.
+    partition : str
+        Partition scheme: 'iid', 'dirichlet', or 'rating_tier'.
+    seed : int
+        Pseudorandom seed for reproducibility.
+    output_csv : Optional[Path]
+        Target path for saving the benchmark matrix CSV.
+    """
     outputs_dir = PROJECT_ROOT / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
@@ -639,11 +660,14 @@ def run_complete_experiment_matrix(
     eff_epochs = 1 if quick else 3
     nn_epochs = 15 if quick else 50
 
+    part_mode = "dirichlet" if non_iid and partition == "iid" else partition
+
     logger.info(
-        "Beginning Complete Experiment Matrix | Rounds: %d | Quick: %s | τ: %.2f | Seed: %d",
+        "Beginning Complete Experiment Matrix | Rounds: %d | Quick: %s | τ: %.2f | Partition: %s | Seed: %d",
         eff_rounds,
         quick,
         tau,
+        part_mode,
         seed,
     )
 
@@ -665,9 +689,13 @@ def run_complete_experiment_matrix(
 
     # Partition training records across 8 banks
     partitioner = BankDatasetPartitioner(n_clients=8, val_ratio=0.15, random_seed=seed)
-    if non_iid:
+    if part_mode == "dirichlet":
         client_datasets = partitioner.partition_non_iid_dirichlet(
             train_df, X_train, y_train, alpha=0.5
+        )
+    elif part_mode == "rating_tier":
+        client_datasets = partitioner.partition_non_iid_rating_tier(
+            train_df, X_train, y_train
         )
     else:
         client_datasets = partitioner.partition_iid(train_df, X_train, y_train)
@@ -936,6 +964,88 @@ def run_complete_experiment_matrix(
     return matrix_df, tau_df
 
 
+def run_multi_seed_matrix(
+    seeds: Sequence[int] = (42, 101, 2024),
+    rounds: int = 5,
+    quick: bool = True,
+    tau: float = 2.5,
+    noise_scale: float = 2.0,
+    partition: str = "iid",
+    output_dir: Optional[Path] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Execute the experiment matrix across multiple seeds to quantify variance.
+    
+    Computes mean and standard deviation for:
+    - Test RMSE (%)
+    - Test MAE (bps)
+    - Test MAPE (%)
+    - TPR (%) (True Positive Rate / Detection Rate)
+    - FPR (%) (False Positive Rate / False Alarm Rate)
+    """
+    outputs_dir = output_dir or (PROJECT_ROOT / "outputs")
+    outputs_dir.mkdir(parents=True, exist_ok=True)
+    all_runs: List[pd.DataFrame] = []
+
+    for s_idx, current_seed in enumerate(seeds):
+        logger.info(
+            "=== Multi-Seed Matrix Evaluation: Seed %d (%d/%d) ===",
+            current_seed,
+            s_idx + 1,
+            len(seeds),
+        )
+        matrix_df, _ = run_complete_experiment_matrix(
+            rounds=rounds,
+            quick=quick,
+            tau=tau,
+            noise_scale=noise_scale,
+            partition=partition,
+            seed=current_seed,
+            output_csv=outputs_dir / f"attack_matrix_seed_{current_seed}.csv",
+        )
+        matrix_df["seed"] = current_seed
+        all_runs.append(matrix_df)
+
+    combined_df = pd.concat(all_runs, ignore_index=True)
+    combined_csv = outputs_dir / "attack_matrix_all_seeds.csv"
+    combined_df.to_csv(combined_csv, index=False)
+
+    # Compute summary statistics grouped by scenario_id and scenario_name
+    numeric_cols = ["test_rmse", "test_mae_bps", "test_mape", "tpr_pct", "fpr_pct"]
+    summary_rows = []
+    for sc_id, group in combined_df.groupby("scenario_id"):
+        first_row = group.iloc[0]
+        row_dict: Dict[str, Any] = {
+            "scenario_id": sc_id,
+            "scenario_name": first_row["scenario_name"],
+            "attack_type": first_row["attack_type"],
+            "num_seeds": len(group),
+        }
+        for col in numeric_cols:
+            vals = pd.to_numeric(group[col], errors="coerce").dropna()
+            row_dict[f"{col}_mean"] = round(float(vals.mean()), 4) if not vals.empty else 0.0
+            row_dict[f"{col}_std"] = round(float(vals.std(ddof=1)), 4) if len(vals) > 1 else 0.0
+        summary_rows.append(row_dict)
+
+    summary_df = pd.DataFrame(summary_rows)
+    summary_csv = outputs_dir / "attack_matrix_multiseed_summary.csv"
+    summary_df.to_csv(summary_csv, index=False)
+    logger.info("Saved multi-seed summary matrix to %s", summary_csv)
+
+    print("\n" + "=" * 115)
+    print("           GREENFED-XAI MULTI-SEED BENCHMARK SUMMARY (MEAN ± STD ACROSS SEEDS)")
+    print("=" * 115)
+    for r in summary_rows:
+        print(
+            f"Scenario {r['scenario_id']:2d}: {r['scenario_name']:<42} | "
+            f"RMSE: {r['test_rmse_mean']:.4f}±{r['test_rmse_std']:.4f} | "
+            f"MAE: {r['test_mae_bps_mean']:6.2f}±{r['test_mae_bps_std']:5.2f} bps | "
+            f"MAPE: {r['test_mape_mean']:5.2f}±{r['test_mape_std']:4.2f}%"
+        )
+    print("=" * 115 + "\n")
+
+    return summary_df, combined_df
+
+
 def main() -> None:
     """CLI entrypoint for running the experiment matrix."""
     parser = argparse.ArgumentParser(
@@ -965,15 +1075,34 @@ def main() -> None:
         help="Noise scale σ for Gaussian poisoning attack (default: 2.0)",
     )
     parser.add_argument(
+        "--partition",
+        type=str,
+        default="iid",
+        choices=["iid", "dirichlet", "rating_tier"],
+        help="Client dataset partition scheme (default: iid)",
+    )
+    parser.add_argument(
         "--non-iid",
         action="store_true",
-        help="Use Dirichlet Non-IID client partitioning instead of IID",
+        help="Use Dirichlet Non-IID client partitioning instead of IID (alias for --partition dirichlet)",
     )
     parser.add_argument(
         "--seed",
         type=int,
         default=42,
         help="Random seed for reproducibility (default: 42)",
+    )
+    parser.add_argument(
+        "--multi-seed",
+        action="store_true",
+        help="Run multi-seed evaluation across 3 seeds (42, 101, 2024)",
+    )
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Explicit list of seeds for multi-seed evaluation (e.g. --seeds 42 101 2024)",
     )
     parser.add_argument(
         "--output-csv",
@@ -985,15 +1114,28 @@ def main() -> None:
     args = parser.parse_args()
     out_csv = Path(args.output_csv) if args.output_csv else None
 
-    run_complete_experiment_matrix(
-        rounds=args.rounds,
-        quick=args.quick,
-        tau=args.tau,
-        noise_scale=args.noise_scale,
-        non_iid=args.non_iid,
-        seed=args.seed,
-        output_csv=out_csv,
-    )
+    if args.multi_seed or args.seeds:
+        eval_seeds = args.seeds if args.seeds else [42, 101, 2024]
+        run_multi_seed_matrix(
+            seeds=eval_seeds,
+            rounds=args.rounds,
+            quick=args.quick,
+            tau=args.tau,
+            noise_scale=args.noise_scale,
+            partition=args.partition if not args.non_iid else "dirichlet",
+            output_dir=out_csv.parent if out_csv else None,
+        )
+    else:
+        run_complete_experiment_matrix(
+            rounds=args.rounds,
+            quick=args.quick,
+            tau=args.tau,
+            noise_scale=args.noise_scale,
+            non_iid=args.non_iid,
+            partition=args.partition,
+            seed=args.seed,
+            output_csv=out_csv,
+        )
 
 
 if __name__ == "__main__":

@@ -1,0 +1,12 @@
+scenario_id,scenario_name,defense_mode,attack_type,malicious_fraction_pct,aggregation,tau,test_rmse,test_mae_pct,test_mae_bps,test_mape,tpr_pct,fpr_pct,tp_count,fp_count,total_malicious,total_honest,duration_sec,notes
+1,Centralized Clean Reference,None (Centralized),None,0.0,Centralized,0.0,0.1052,0.0826,8.26,3.21,0.0,0.0,0,0,0,0,3.47,Centralized upper bound on uncorrupted pooled data
+2,Clean FedAvg (Weighted),none,none,0.0,weighted,0.0,0.5148,0.4207,42.07,17.0,0.0,0.0,0,0,0,24,0.81,Honest decentralized baseline (sample-proportional averaging)
+3,Clean FedAvg (Equal),none,none,0.0,equal,0.0,0.5148,0.4206,42.06,17.0,0.0,0.0,0,0,0,24,0.58,Honest baseline with uniform client averaging (paper algorithm)
+4,Clean FedAvg + Hash Logging,hash_only,none,0.0,weighted,0.0,0.5148,0.4207,42.07,17.0,0.0,0.0,0,0,0,24,0.74,Blockchain hash audit active; norm check disabled (confirms no metric distortion)
+5,Clean FedAvg + Norm Filter (τ=2.5),blockchain_norm,none,0.0,weighted,2.5,0.5148,0.4207,42.07,17.0,0.0,0.0,0,0,0,24,0.73,Full GreenFed-XAI on honest cohort; verifies FPR = 0% on clean updates
+6,Attacked FedAvg (No Defense),none,gaussian_noise,25.0,weighted,0.0,21.2609,12.5755,1257.55,393.11,0.0,0.0,0,0,6,18,0.64,25% malicious clients (2/8); Gaussian noise poison; no defense
+7,Attacked FedAvg + Hash Checks Only,hash_only,gaussian_noise,25.0,weighted,0.0,21.2609,12.5755,1257.55,393.11,0.0,0.0,0,0,6,18,0.65,Cryptographic hash valid; demonstrates hash alone fails to block poisoned weights
+8,Attacked FedAvg + Norm Filter [GreenFed-XAI],blockchain_norm,gaussian_noise,25.0,weighted,2.5,0.5248,0.4296,42.96,17.32,100.0,0.0,6,0,6,18,0.63,Smart contract rejects high-norm updates; preserves pricing accuracy
+9,Attacked FedAvg + Adaptive Attack,blockchain_norm,adaptive_perturbation,25.0,weighted,2.5,0.801,0.6572,65.72,26.51,0.0,0.0,0,0,6,18,0.67,Adversary bounds update to ||Δw||_2 <= 0.95*τ to evade norm filter
+10,Sensor Attack (No Oracle),none,none,0.0,weighted,0.0,0.3679,0.2992,29.92,11.48,0.0,0.0,0,0,0,24,1.8,FL trained on unmitigated greenwashed sensor readings (+9.3 pts bias)
+11,Sensor Attack (With Oracle),none,none,0.0,weighted,0.0,0.3678,0.2992,29.92,11.48,0.0,0.0,0,0,0,24,1.75,FL trained on IoT oracle-validated sensor readings (forward-fill fallback)

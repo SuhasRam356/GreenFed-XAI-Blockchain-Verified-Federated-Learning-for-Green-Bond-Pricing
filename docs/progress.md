@@ -17,6 +17,8 @@
 
 ## Phase 6 Benchmark Results Matrix
 
+### Single-Run Benchmark (100-Round Converged Matrix)
+
 | Scenario ID | Scenario Name | Threat Model / Defense | RMSE (%) | MAE (bps) | MAPE (%) | TPR (%) | FPR (%) |
 |:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|
 | **1** | Centralized Clean Reference | None (Centralized Upper Bound) | 0.0868 | 6.93 | 2.72% | N/A | N/A |
@@ -30,4 +32,20 @@
 | **9** | Attacked FedAvg + Adaptive | Constrained Perturbation ($\|\Delta w\| \le 0.95\tau$) | 0.1800 | 14.64 | 5.37% | 0.0% | 0.0% |
 | **10** | Sensor Attack (No Oracle) | Raw Greenwashed Telemetry | 0.1506 | 12.12 | 4.44% | N/A | N/A |
 | **11** | Sensor Attack (With Oracle) | IoT Oracle Validated + Mitigated | 0.1445 | 11.61 | 4.29% | N/A | N/A |
+
+### Multi-Seed Empirical Verification (Mean ± Std across Seeds)
+
+| Scenario ID | Scenario Name | Attack Type | RMSE (%) | MAE (bps) | MAPE (%) | TPR (%) | FPR (%) |
+|:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| **1** | Centralized Clean Reference | None | 0.0973 ± 0.0112 | 7.71 ± 0.78 | 3.00 ± 0.30% | N/A | N/A |
+| **2** | Clean FedAvg (Weighted) | None | 0.7452 ± 0.3259 | 60.60 ± 26.21 | 24.57 ± 10.71% | N/A | N/A |
+| **3** | Clean FedAvg (Equal) | None | 0.7452 ± 0.3259 | 60.59 ± 26.21 | 24.57 ± 10.71% | N/A | N/A |
+| **4** | Clean FedAvg + Hash Logging | None | 0.7452 ± 0.3259 | 60.60 ± 26.21 | 24.57 ± 10.71% | N/A | 0.0% |
+| **5** | Clean FedAvg + Norm Filter | None | 0.7452 ± 0.3259 | 60.60 ± 26.21 | 24.57 ± 10.71% | N/A | 0.0% |
+| **6** | Attacked FedAvg (No Defense) | Gaussian Noise ($\sigma = 2.0$) | 30.9855 ± 13.7527 | 2221.71 ± 1363.53 | 837.59 ± 628.59% | 0.0% | 0.0% |
+| **7** | Attacked FedAvg + Hash Only | Gaussian Noise ($\sigma = 2.0$) | 30.9855 ± 13.7527 | 2221.71 ± 1363.53 | 837.59 ± 628.59% | 0.0% | 0.0% |
+| **8** | Attacked FedAvg + Norm Filter | Gaussian Noise ($\tau = 2.50$) | **0.7490 ± 0.3170** | **60.95 ± 25.44** | **24.66 ± 10.38%** | **100.0%** | **0.0%** |
+| **9** | Attacked FedAvg + Adaptive | Adaptive Perturbation | 1.1706 ± 0.5227 | 98.89 ± 46.90 | 35.35 ± 12.50% | 0.0% | 0.0% |
+| **10** | Sensor Attack (No Oracle) | Biased Telemetry | 0.3600 ± 0.0111 | 29.20 ± 1.03 | 11.26 ± 0.32% | N/A | N/A |
+| **11** | Sensor Attack (With Oracle) | Validated Telemetry | 0.3600 ± 0.0110 | 29.20 ± 1.03 | 11.26 ± 0.32% | N/A | N/A |
 

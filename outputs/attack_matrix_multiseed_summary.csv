@@ -1,0 +1,12 @@
+scenario_id,scenario_name,attack_type,num_seeds,test_rmse_mean,test_rmse_std,test_mae_bps_mean,test_mae_bps_std,test_mape_mean,test_mape_std,tpr_pct_mean,tpr_pct_std,fpr_pct_mean,fpr_pct_std
+1,Centralized Clean Reference,None,2,0.0973,0.0112,7.71,0.7778,2.995,0.3041,0.0,0.0,0.0,0.0
+2,Clean FedAvg (Weighted),none,2,0.7452,0.3259,60.6,26.2054,24.57,10.7056,0.0,0.0,0.0,0.0
+3,Clean FedAvg (Equal),none,2,0.7452,0.3259,60.595,26.2124,24.57,10.7056,0.0,0.0,0.0,0.0
+4,Clean FedAvg + Hash Logging,none,2,0.7452,0.3259,60.6,26.2054,24.57,10.7056,0.0,0.0,0.0,0.0
+5,Clean FedAvg + Norm Filter (τ=2.5),none,2,0.7452,0.3259,60.6,26.2054,24.57,10.7056,0.0,0.0,0.0,0.0
+6,Attacked FedAvg (No Defense),gaussian_noise,2,30.9855,13.7527,2221.71,1363.5281,837.59,628.5896,0.0,0.0,0.0,0.0
+7,Attacked FedAvg + Hash Checks Only,gaussian_noise,2,30.9855,13.7527,2221.71,1363.5281,837.59,628.5896,0.0,0.0,0.0,0.0
+8,Attacked FedAvg + Norm Filter [GreenFed-XAI],gaussian_noise,2,0.749,0.317,60.95,25.4417,24.66,10.3803,100.0,0.0,0.0,0.0
+9,Attacked FedAvg + Adaptive Attack,adaptive_perturbation,2,1.1706,0.5227,98.885,46.9024,35.35,12.5016,0.0,0.0,0.0,0.0
+10,Sensor Attack (No Oracle),none,2,0.36,0.0111,29.195,1.0253,11.255,0.3182,0.0,0.0,0.0,0.0
+11,Sensor Attack (With Oracle),none,2,0.36,0.011,29.195,1.0253,11.255,0.3182,0.0,0.0,0.0,0.0

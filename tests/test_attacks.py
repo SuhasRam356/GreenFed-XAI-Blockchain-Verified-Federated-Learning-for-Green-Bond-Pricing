@@ -200,3 +200,84 @@ class TestConfusionMatrix:
         assert cm["false_positives"] == 0
         assert cm["tpr"] == 0.0
         assert cm["fpr"] == 0.0
+
+    def test_confusion_matrix_all_quadrants(self):
+        """Test calculation when all 4 quadrants (TP, FP, TN, FN) have non-zero counts."""
+        # 1 round with 8 clients: clients 6 & 7 malicious.
+        # Suppose client 6 was rejected (TP), client 7 was accepted (FN),
+        # client 0 was rejected (FP), and clients 1-5 were accepted (5 TN).
+        audit_history = [
+            {"accepted_clients": [1, 2, 3, 4, 5, 7], "rejected_clients": [0, 6]},
+        ]
+        cm = compute_attack_confusion_matrix(audit_history, malicious_client_ids=[6, 7])
+        assert cm["true_positives"] == 1   # client 6
+        assert cm["false_negatives"] == 1  # client 7
+        assert cm["false_positives"] == 1  # client 0
+        assert cm["true_negatives"] == 5   # clients 1,2,3,4,5
+        assert cm["tpr"] == pytest.approx(0.5)
+        assert cm["fpr"] == pytest.approx(1.0 / 6.0)
+
+
+class TestAdvancedAttackScenarios:
+    """Tests for payload tampering and multi-tau adaptive perturbation."""
+
+    def test_payload_tamper_attack(self, mock_client_dataset):
+        """Payload tampering commits hash of honest weights but returns modified weights."""
+        from chain.mock_ledger import MockBlockchain, SmartContract, VerificationStatus
+
+        cfg = MaliciousClientConfig(
+            client_id=3,
+            attack_type=AttackType.PAYLOAD_TAMPER,
+            seed=42,
+        )
+        client = MaliciousGreenBondClient(
+            client_id=3,
+            dataset=mock_client_dataset,
+            attack_config=cfg,
+        )
+        init_params = client.get_parameters()
+        tampered_weights, _, metrics = client.fit(
+            init_params, {"current_round": 1, "local_epochs": 1}
+        )
+        assert metrics["attack_type"] == "payload_tamper"
+        assert "committed_hash" in metrics
+
+        # Verify against SmartContract
+        blockchain = MockBlockchain(mining_difficulty=1)
+        contract = SmartContract(blockchain=blockchain, tau=2.5)
+
+        # SmartContract verifies tampered weights against committed hash
+        result = contract.process_update(
+            client_id=3,
+            parameters=tampered_weights,
+            grad_norm=metrics["update_norm"],
+            round_idx=1,
+            submitted_hash=metrics["committed_hash"],
+        )
+        # Must detect hash mismatch!
+        assert result.status in [
+            VerificationStatus.REJECTED_HASH_MISMATCH,
+            VerificationStatus.REJECTED_BOTH,
+        ]
+        assert result.hash_valid is False
+
+    def test_adaptive_perturbation_scaling_under_different_taus(self, mock_client_dataset):
+        """Adaptive perturbation must correctly scale to stay below various tau thresholds."""
+        for test_tau in [1.5, 2.5, 4.0]:
+            cfg = MaliciousClientConfig(
+                client_id=1,
+                attack_type=AttackType.ADAPTIVE_PERTURBATION,
+                target_norm=test_tau * 0.90,
+                seed=42,
+            )
+            client = MaliciousGreenBondClient(
+                client_id=1,
+                dataset=mock_client_dataset,
+                attack_config=cfg,
+            )
+            init_params = client.get_parameters()
+            weights, _, metrics = client.fit(
+                init_params, {"current_round": 1, "local_epochs": 1, "tau": test_tau}
+            )
+            assert metrics["update_norm"] < test_tau
+            assert metrics["update_norm"] == pytest.approx(test_tau * 0.90, rel=1e-2)

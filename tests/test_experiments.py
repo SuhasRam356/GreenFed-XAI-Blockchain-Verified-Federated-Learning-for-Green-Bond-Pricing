@@ -15,6 +15,7 @@ from experiments.run_matrix import (
     generate_experiment_plots,
     load_dataset_and_preprocessor,
     run_fl_benchmark_scenario,
+    run_multi_seed_matrix,
     run_tau_sensitivity_sweep,
 )
 from fl.dataset_partitioner import ClientDataset
@@ -164,4 +165,40 @@ class TestExperimentExecution:
 
         assert (tmp_path / "attack_matrix_comparison.png").exists()
         assert (tmp_path / "tau_sensitivity.png").exists()
+
+    def test_multi_seed_summary_aggregation(self, tmp_path):
+        """Multi-seed summary properly groups runs and calculates mean and standard deviation."""
+        # Create synthetic multi-seed run dataframe
+        df_seed1 = pd.DataFrame([
+            {"scenario_id": 1, "scenario_name": "S1", "attack_type": "none", "test_rmse": 0.10, "test_mae_bps": 8.0, "test_mape": 3.0, "tpr_pct": 0.0, "fpr_pct": 0.0},
+            {"scenario_id": 2, "scenario_name": "S2", "attack_type": "noise", "test_rmse": 1.20, "test_mae_bps": 95.0, "test_mape": 40.0, "tpr_pct": 100.0, "fpr_pct": 0.0},
+        ])
+        df_seed2 = pd.DataFrame([
+            {"scenario_id": 1, "scenario_name": "S1", "attack_type": "none", "test_rmse": 0.12, "test_mae_bps": 10.0, "test_mape": 3.4, "tpr_pct": 0.0, "fpr_pct": 0.0},
+            {"scenario_id": 2, "scenario_name": "S2", "attack_type": "noise", "test_rmse": 1.30, "test_mae_bps": 105.0, "test_mape": 44.0, "tpr_pct": 100.0, "fpr_pct": 0.0},
+        ])
+        combined = pd.concat([df_seed1, df_seed2], ignore_index=True)
+
+        numeric_cols = ["test_rmse", "test_mae_bps", "test_mape", "tpr_pct", "fpr_pct"]
+        summary_rows = []
+        for sc_id, group in combined.groupby("scenario_id"):
+            first_row = group.iloc[0]
+            row_dict = {
+                "scenario_id": sc_id,
+                "scenario_name": first_row["scenario_name"],
+                "attack_type": first_row["attack_type"],
+                "num_seeds": len(group),
+            }
+            for col in numeric_cols:
+                vals = pd.to_numeric(group[col], errors="coerce").dropna()
+                row_dict[f"{col}_mean"] = round(float(vals.mean()), 4)
+                row_dict[f"{col}_std"] = round(float(vals.std(ddof=1)), 4)
+            summary_rows.append(row_dict)
+
+        summary_df = pd.DataFrame(summary_rows)
+        assert len(summary_df) == 2
+        s1 = summary_df[summary_df["scenario_id"] == 1].iloc[0]
+        assert s1["test_rmse_mean"] == pytest.approx(0.11, abs=1e-3)
+        assert s1["test_mae_bps_mean"] == pytest.approx(9.0, abs=1e-3)
+        assert s1["test_rmse_std"] > 0.0
 

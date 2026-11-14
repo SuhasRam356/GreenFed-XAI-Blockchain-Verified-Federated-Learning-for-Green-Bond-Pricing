@@ -327,12 +327,16 @@ class BlockchainVerifiedStrategy(GreenFedAvgStrategy):
                 client_params = parameters_to_ndarrays(fit_res.parameters)
 
             # ----------------------------------------------------------
-            # Step 2: Compute SHA-256 hash of model parameters
+            # Step 2: Extract committed parameter hash or compute from payload
             # ----------------------------------------------------------
-            param_hash = SmartContract.compute_parameter_hash(client_params)
+            committed_hash = fit_res.metrics.get("committed_hash")
+            if committed_hash is not None and str(committed_hash).strip():
+                param_hash = str(committed_hash).strip()
+            else:
+                param_hash = SmartContract.compute_parameter_hash(client_params)
 
             # ----------------------------------------------------------
-            # Step 3: Submit hash to blockchain
+            # Step 3: Submit hash commitment to blockchain
             # ----------------------------------------------------------
             self.smart_contract.submit_hash(
                 client_id=client_id,
