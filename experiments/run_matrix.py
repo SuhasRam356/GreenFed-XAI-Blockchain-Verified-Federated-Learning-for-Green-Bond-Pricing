@@ -308,10 +308,14 @@ def run_fl_benchmark_scenario(
     duration = time.time() - t0
 
     # 5. Evaluate on 1,500-sample Test Set
-    _, test_rmse, test_mape, y_pred = engine.evaluate_test_set()
-    y_t_flat = y_test.flatten()
-    test_mae = compute_mae(y_t_flat, y_pred)
-    test_mae_bps = compute_mae_bps(y_t_flat, y_pred)
+    eval_res = engine.evaluate_test_set()
+    if len(eval_res) == 6:
+        _, test_rmse, test_mae, test_mae_bps, test_mape, y_pred = eval_res
+    else:
+        _, test_rmse, test_mape, y_pred = eval_res[:4]
+        y_t_flat = y_test.flatten()
+        test_mae = compute_mae(y_t_flat, y_pred)
+        test_mae_bps = compute_mae_bps(y_t_flat, y_pred)
 
     # 6. Compute Confusion Matrix from Blockchain Audit History
     if hasattr(strategy, "blockchain_audit_history") and strategy.blockchain_audit_history:

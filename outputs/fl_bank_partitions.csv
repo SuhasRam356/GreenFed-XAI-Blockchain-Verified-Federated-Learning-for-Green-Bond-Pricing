@@ -1,0 +1,9 @@
+client_id,bank_name,n_train_samples,n_val_samples,mean_yield_spread_pct,std_yield_spread_pct,min_yield_spread_pct,max_yield_spread_pct,institution_type,jurisdiction,risk_profile,count_AAA,count_AA,count_A,count_BBB,count_BB,count_B
+0,Bank_0_NordicGreen,747,131,2.7701501846313477,0.7953879237174988,0.6029000282287598,5.295100212097168,Global Systemically Important Bank (G-SIB),Nordic / EEA,Conservative / AAA-AA Focused,86,183,220,221,125,43
+1,Bank_1_AlpineCapital,745,131,2.776508331298828,0.7946515083312988,0.41100001335144043,5.270599842071533,European Commercial Bank,DACH / Central Europe,Conservative / Investment Grade,85,183,220,221,125,42
+2,Bank_2_PacificAsset,745,131,2.782930374145508,0.8168991804122925,0.8091999888420105,5.24560022354126,Institutional Asset Manager,Asia-Pacific,Balanced / A-BBB Focus,85,183,220,221,125,42
+3,Bank_3_AtlanticMutual,744,131,2.807518720626831,0.8286827802658081,0.66839998960495,5.807700157165527,Mutual Savings & Loan Consortium,North America,Balanced / Investment Grade,85,183,219,221,125,42
+4,Bank_4_ContinentalTrust,744,131,2.7959775924682617,0.7938774824142456,0.63919997215271,5.178699970245361,Multinational Investment Bank,Western Europe,Balanced / Broad Market,85,183,219,221,125,42
+5,Bank_5_BorealInvest,743,131,2.844433546066284,0.8212844729423523,0.43059998750686646,5.560500144958496,Public Pension & Sovereign Affiliate,Northern Europe,Conservative / High Tenor Focus,85,182,219,221,125,42
+6,Bank_6_EquatorialFin,743,130,2.780242919921875,0.8125723004341125,0.5845000147819519,5.22760009765625,Emerging Market Development Bank,Latin America & Caribbean,High-Yield / Growth Focused,85,182,219,221,124,42
+7,Bank_7_MeridianHoldings,743,130,2.7995502948760986,0.8103795051574707,0.6820999979972839,5.284800052642822,Private Debt & Specialized Infrastructure Fund,Global Offshore,High-Yield / Opportunistic,85,182,219,221,124,42

@@ -1,4 +1,7 @@
-model,rmse_pct,mae_pct,mae_bps,mape_pct,train_time_s
-Linear Regression,0.1268,0.0973,9.73,3.7,0.01
-XGBoost,0.0909,0.0719,7.19,2.8,2.54
-Centralized NN,0.0893,0.0711,7.11,2.79,11.57
+model,rmse_pct,mae_pct,mae_bps,mape_pct,train_time_s,notes
+Linear Regression,0.1268,0.0973,9.73,3.7,0.01,
+XGBoost,0.0909,0.0719,7.19,2.8,2.54,
+Centralized NN,0.0893,0.0711,7.11,2.79,11.57,
+FedAvg (weighted),0.5816,0.4601,46.01,20.37,1.91,"T=3, K=8, E=1, iid, weighted"
+FedAvg (equal),0.5999,0.4806,48.06,21.17,1.89,"T=3, K=8, E=1, iid, equal"
+GreenFed-XAI (blockchain-verified),0.7901,0.6192,61.92,27.98,2.4,"T=3, K=8, E=1, iid, weighted"

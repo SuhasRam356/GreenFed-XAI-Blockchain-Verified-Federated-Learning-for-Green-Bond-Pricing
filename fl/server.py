@@ -1,57 +1,64 @@
-"""
-Federated Learning Server & Simulation Runner — GreenFed-XAI
-============================================================
+r"""
+Federated Learning Simulation Orchestrator & Server — GreenFed-XAI
+==================================================================
 
-This module orchestrates the Federated Learning training pipeline across
-the K = 8 simulated banking institutions as specified in Phase 3 of the
-project implementation guide and Section IV-C of the IEEE paper.
+This module orchestrates decentralized training across the consortium of $K = 8$
+participating financial institutions, evaluating performance on the held-out
+1,500-sample test benchmark under rigorous scientific constraints.
 
-Theoretical Workflow:
+Mathematical Workflow:
 ---------------------
-1. Load proprietary bond partitions across K = 8 banks.
-2. Initialize global neural network w_0 (128->64->32 architecture).
-3. In each global round t = 1 ... T:
-   a. Server broadcasts current global parameters w_t.
-   b. Each bank k trains locally on its private dataset D_k for E epochs.
-   c. Banks report updated parameters w_{t+1}^{(k)} and gradient norms ||dw_k||_2.
-   d. Aggregator updates global model: w_{t+1} = \\sum_k (|D_k| / |D|) * w_{t+1}^{(k)}.
-   e. Central evaluation is conducted on validation benchmark to record loss.
-4. Final evaluation of the aggregated model on the 1,500 test set.
-5. Generates loss curve visualizations and appends FedAvg results to Table I.
-
-Usage:
-------
-    python fl/server.py --rounds 25 --clients 8 --local-epochs 3
-    python fl/server.py --rounds 100  # full reproduction
+1. Partition private bond portfolios across $K = 8$ banks under Stratified IID,
+   Non-IID Dirichlet ($\alpha = 0.5$), or Non-IID Rating-Tier specialization.
+2. Initialize global neural network $w_0 \sim \mathcal{N}(0, \sigma^2)$ ($128 \to 64 \to 32$ architecture).
+3. In each global communication round $t = 1, \dots, T$:
+   a. Aggregator broadcasts global parameter vector $w_t$.
+   b. Each bank $k$ runs local optimization on its private dataset $\mathcal{D}_k$ for $E$ epochs:
+      $$w_{t+1}^{(k)} \leftarrow \text{LocalOptimization}(w_t, \mathcal{D}_k)$$
+   c. Banks report updated weights $w_{t+1}^{(k)}$ and update norms $\|\Delta w_k\|_2 = \|w_{t+1}^{(k)} - w_t\|_2$.
+   d. Aggregator filters updates (via baseline verification hook or Phase 5 blockchain smart contract).
+   e. Aggregator averages accepted weights:
+      - Sample-Weighted: $w_{t+1} = \sum_{k \in S} \frac{|\mathcal{D}_k|}{\sum_{j \in S} |\mathcal{D}_j|} w_{t+1}^{(k)}$
+      - Equal-Client: $w_{t+1} = \frac{1}{|S|} \sum_{k \in S} w_{t+1}^{(k)}$
+   f. Evaluates $w_{t+1}$ on central validation benchmark (MSE, RMSE, MAE bps, MAPE).
+4. Conducts final out-of-sample evaluation on the 1,500-bond test set.
+5. Exports loss curves, convergence telemetry CSVs, and Table I benchmark records.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+from pathlib import Path
 import pickle
 import sys
 import time
-from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
 
-# Add project root to path
+# Ensure project root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from fl.client import GreenBondFlowerClient, compute_mape, compute_rmse
+from fl.client import (
+    GreenBondFlowerClient,
+    compute_mae,
+    compute_mae_bps,
+    compute_mape,
+    compute_rmse,
+)
 from fl.dataset_partitioner import BankDatasetPartitioner, ClientDataset
 from fl.strategy_blockchain import BlockchainVerifiedStrategy
-from fl.strategy_fedavg import GreenFedAvgStrategy
+from fl.strategy_fedavg import GreenFedAvgStrategy, RoundConvergenceMetrics
 from models.nn_model import GreenBondNN
 from models.preprocessing import DataPreprocessor
 
-# Configure logger
+# Configure server logger
 logger = logging.getLogger("GreenFedServer")
 if not logger.handlers:
     handler = logging.StreamHandler()
@@ -78,7 +85,7 @@ class FederatedSimulationEngine:
     initial_weights : List[np.ndarray]
         List of NumPy parameter arrays for the global model at round 0.
     eval_test_dataset : Tuple[np.ndarray, np.ndarray]
-        Test set features and targets (1,500 samples) for final verification.
+        Test set features and targets (1,500 samples) strictly reserved for final verification.
     """
 
     def __init__(
@@ -100,6 +107,7 @@ class FederatedSimulationEngine:
         local_epochs: int = 3,
         batch_size: int = 64,
         learning_rate: float = 0.001,
+        optimizer_type: str = "adam",
     ) -> Dict[str, Any]:
         """Execute T federated learning communication rounds.
 
@@ -110,9 +118,11 @@ class FederatedSimulationEngine:
         local_epochs : int
             Local epochs per bank per round (default: 3).
         batch_size : int
-            Mini-batch size for client SGD (default: 64).
+            Mini-batch size for client SGD/Adam (default: 64).
         learning_rate : float
             Learning rate for client optimizers (default: 0.001).
+        optimizer_type : str
+            Client optimizer ('adam' or 'sgd').
 
         Returns:
         --------
@@ -120,9 +130,10 @@ class FederatedSimulationEngine:
             Dictionary summarizing convergence history and final metrics.
         """
         logger.info(
-            "Starting Federated Learning across %d banks for %d global rounds...",
+            "Starting Federated Learning across %d banks for %d global rounds (aggregation: %s)...",
             self.n_clients,
             num_rounds,
+            self.strategy.aggregation,
         )
         start_time = time.time()
 
@@ -137,12 +148,14 @@ class FederatedSimulationEngine:
                     "local_epochs": local_epochs,
                     "batch_size": batch_size,
                     "learning_rate": learning_rate,
+                    "optimizer_type": optimizer_type,
+                    "tau": getattr(self.strategy, "tau", 2.5),
                 }
                 updated_weights, num_samples, metrics = client.fit(
                     self.current_weights, fit_config
                 )
 
-                # Wrap into lightweight fit representation compatible with strategy
+                # Wrap into fit representation compatible with Flower strategy
                 fit_res_mock = type(
                     "FitResMock",
                     (),
@@ -170,7 +183,7 @@ class FederatedSimulationEngine:
 
             if not accepted_results:
                 logger.error(
-                    "Round %d: All updates rejected! Keeping previous round weights.",
+                    "Round %d: All updates rejected! Preserving previous round weights.",
                     round_idx,
                 )
                 continue
@@ -188,54 +201,55 @@ class FederatedSimulationEngine:
                 for i, layer in enumerate(res.parameters.ndarrays):
                     new_global_weights[i] += layer * fraction
                 weighted_train_loss += (
-                    res.metrics.get("train_loss", 0.0) * res.num_examples
+                    float(res.metrics.get("train_loss", 0.0)) * fraction
                 )
-                client_norms[int(res.metrics.get("client_id", -1))] = float(
-                    res.metrics.get("grad_norm", 0.0)
+                cid = int(res.metrics.get("client_id", -1))
+                norm_val = float(
+                    res.metrics.get(
+                        "update_norm", res.metrics.get("grad_norm", 0.0)
+                    )
                 )
+                client_norms[cid] = norm_val
 
-            weighted_train_loss /= max(1, total_samples)
             self.current_weights = new_global_weights
-            self.strategy.latest_global_ndarrays = self.current_weights
 
-            # Step 4: Central validation evaluation
-            val_loss, val_rmse, val_mape = 0.0, 0.0, 0.0
-            if (
-                self.strategy.eval_dataset is not None
-                and self.strategy.eval_model is not None
-            ):
-                val_loss, val_rmse, val_mape = (
-                    self.strategy._evaluate_global_model(self.current_weights)
-                )
+            # Step 4: Central validation benchmark evaluation
+            val_loss, val_rmse, val_mae, val_mae_bps, val_mape = (
+                self.strategy.evaluate_global_model(self.current_weights)
+            )
+            round_duration = time.time() - round_start
+            avg_norm = float(np.mean(list(client_norms.values()))) if client_norms else 0.0
 
-            # Record round metrics
-            from fl.strategy_fedavg import RoundConvergenceMetrics
+            logger.info(
+                "Round %3d/%3d (%.1fs) | Train Loss: %.6f | Val Loss: %.6f | "
+                "RMSE: %.4f%% | MAE: %.2f bps | MAPE: %.2f%% | ||Δw||: %.4f",
+                round_idx,
+                num_rounds,
+                round_duration,
+                weighted_train_loss,
+                val_loss,
+                val_rmse,
+                val_mae_bps,
+                val_mape,
+                avg_norm,
+            )
 
-            avg_norm = float(np.mean(list(client_norms.values())))
+            # Record round metric
             round_metric = RoundConvergenceMetrics(
-                round_idx=round_idx,
+                server_round=round_idx,
                 train_loss=float(weighted_train_loss),
                 val_loss=float(val_loss),
                 val_rmse=float(val_rmse),
+                val_mae_pct=float(val_mae),
+                val_mae_bps=float(val_mae_bps),
                 val_mape=float(val_mape),
                 avg_update_norm=float(avg_norm),
                 client_update_norms=client_norms,
+                aggregation_mode=self.strategy.aggregation,
+                num_accepted=num_accepted,
+                duration_sec=round(round_duration, 3),
             )
             self.strategy.history.append(round_metric)
-
-            round_elapsed = time.time() - round_start
-            if round_idx % 5 == 0 or round_idx == 1 or round_idx == num_rounds:
-                logger.info(
-                    "Round %3d/%3d (%.1fs) | Train Loss: %.6f | Val Loss: %.6f | RMSE: %.4f%% | MAPE: %.2f%% | ||dw||: %.4f",
-                    round_idx,
-                    num_rounds,
-                    round_elapsed,
-                    weighted_train_loss,
-                    val_loss,
-                    val_rmse,
-                    val_mape,
-                    avg_norm,
-                )
 
         total_duration = time.time() - start_time
         logger.info(
@@ -245,10 +259,11 @@ class FederatedSimulationEngine:
         )
 
         # Final out-of-sample test evaluation
-        test_loss, test_rmse, test_mape, y_pred = self.evaluate_test_set()
+        test_loss, test_rmse, test_mae, test_mae_bps, test_mape, y_pred = self.evaluate_test_set()
         logger.info(
-            "Final Test Performance (1,500 samples): RMSE = %.4f%% | MAPE = %.2f%%",
+            "Final Test Performance (1,500 samples): RMSE = %.4f%% | MAE = %.2f bps | MAPE = %.2f%%",
             test_rmse,
+            test_mae_bps,
             test_mape,
         )
 
@@ -256,6 +271,8 @@ class FederatedSimulationEngine:
             "num_rounds": num_rounds,
             "total_duration": total_duration,
             "test_rmse": test_rmse,
+            "test_mae_pct": test_mae,
+            "test_mae_bps": test_mae_bps,
             "test_mape": test_mape,
             "test_loss": test_loss,
             "y_pred": y_pred,
@@ -263,8 +280,14 @@ class FederatedSimulationEngine:
             "history_df": self.strategy.get_history_dataframe(),
         }
 
-    def evaluate_test_set(self) -> Tuple[float, float, float, np.ndarray]:
-        """Evaluate current global weights on the 1,500-sample test set."""
+    def evaluate_test_set(self) -> Tuple[float, float, float, float, float, np.ndarray]:
+        """Evaluate current global weights on the 1,500-sample test set.
+
+        Returns:
+        --------
+        Tuple[float, float, float, float, float, np.ndarray]
+            (test_loss, test_rmse, test_mae, test_mae_bps, test_mape, y_pred)
+        """
         X_test, y_test = self.eval_test_dataset
         input_dim = X_test.shape[1]
         model = GreenBondNN(input_dim=input_dim, dropout_rate=0.2)
@@ -286,10 +309,13 @@ class FederatedSimulationEngine:
             preds_np = preds.cpu().numpy().flatten()
             preds_np = np.clip(preds_np, 0.01, None)
 
-        rmse = compute_rmse(y_test.flatten(), preds_np)
-        mape = compute_mape(y_test.flatten(), preds_np)
+        y_test_flat = y_test.flatten()
+        rmse = compute_rmse(y_test_flat, preds_np)
+        mae = compute_mae(y_test_flat, preds_np)
+        mae_bps = compute_mae_bps(y_test_flat, preds_np)
+        mape = compute_mape(y_test_flat, preds_np)
 
-        return float(loss), float(rmse), float(mape), preds_np
+        return float(loss), float(rmse), float(mae), float(mae_bps), float(mape), preds_np
 
 
 # ---------------------------------------------------------------------------
@@ -297,206 +323,239 @@ class FederatedSimulationEngine:
 # ---------------------------------------------------------------------------
 
 def generate_loss_curve_plot(
-    history_df: pd.DataFrame, output_path: Path
+    history_df: pd.DataFrame, output_path: Path, title_prefix: str = "FedAvg"
 ) -> Path:
-    """Generate and save the Federated Learning loss curve plot."""
-    try:
-        import matplotlib.pyplot as plt
+    """Generate and save publication-quality loss and update-norm curve plots."""
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    rounds = history_df["round"].to_numpy()
+    train_loss = history_df["train_loss"].to_numpy()
+    val_loss = history_df["val_loss"].to_numpy()
+    val_rmse = history_df["val_rmse"].to_numpy()
+    val_mae_bps = history_df.get("val_mae_bps", pd.Series(np.zeros_like(rounds))).to_numpy()
+    update_norms = history_df.get("avg_update_norm", history_df.get("avg_grad_norm")).to_numpy()
 
-        # Subplot 1: MSE Loss Curves
-        ax1.plot(
-            history_df["round"],
-            history_df["train_loss"],
-            label="Weighted Train Loss",
-            color="#1f77b4",
-            lw=2,
-        )
-        ax1.plot(
-            history_df["round"],
-            history_df["val_loss"],
-            label="Central Val Loss",
-            color="#ff7f0e",
-            lw=2,
-            linestyle="--",
-        )
-        ax1.set_title("FedAvg Convergence: MSE Loss vs. Round", fontsize=12)
-        ax1.set_xlabel("Communication Round", fontsize=11)
-        ax1.set_ylabel("Mean Squared Error", fontsize=11)
-        ax1.grid(True, linestyle=":", alpha=0.6)
-        ax1.legend(fontsize=10)
+    # Left Plot: Loss Convergence
+    ax1.plot(rounds, train_loss, label="Training MSE Loss", color="#1f77b4", linewidth=2.0)
+    ax1.plot(rounds, val_loss, label="Validation MSE Loss", color="#ff7f0e", linestyle="--", linewidth=2.0)
+    ax1.set_xlabel("Global Communication Round (t)", fontsize=11, fontweight="bold")
+    ax1.set_ylabel("Mean Squared Error (MSE)", fontsize=11, fontweight="bold")
+    ax1.set_title(f"{title_prefix}: Loss Convergence Across Rounds", fontsize=12, fontweight="bold")
+    ax1.grid(True, linestyle="--", alpha=0.6)
+    ax1.legend(loc="upper right", frameon=True)
 
-        # Subplot 2: RMSE and MAPE Evaluation
-        ax2.plot(
-            history_df["round"],
-            history_df["val_rmse"],
-            label="Val RMSE (%)",
-            color="#2ca02c",
-            lw=2,
-        )
-        ax2.plot(
-            history_df["round"],
-            history_df["val_mape"],
-            label="Val MAPE (%)",
-            color="#d62728",
-            lw=2,
-            linestyle="-.",
-        )
-        ax2.set_title("FedAvg Prediction Error Across Rounds", fontsize=12)
-        ax2.set_xlabel("Communication Round", fontsize=11)
-        ax2.set_ylabel("Error Metric (%)", fontsize=11)
-        ax2.grid(True, linestyle=":", alpha=0.6)
-        ax2.legend(fontsize=10)
+    # Right Plot: Update Norm Trajectory & Spread MAE
+    color_norm = "#2ca02c"
+    ax2.plot(rounds, update_norms, label="Mean Update Norm ||Δw||_2", color=color_norm, linewidth=2.0)
+    ax2.axhline(y=2.5, color="purple", linestyle=":", label="Paper Threshold τ = 2.5", alpha=0.7)
+    ax2.set_xlabel("Global Communication Round (t)", fontsize=11, fontweight="bold")
+    ax2.set_ylabel("Update Vector L2 Norm ||Δw||_2", color=color_norm, fontsize=11, fontweight="bold")
+    ax2.tick_params(axis="y", labelcolor=color_norm)
+    ax2.grid(True, linestyle="--", alpha=0.6)
 
-        plt.tight_layout()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        plt.savefig(output_path, dpi=300)
-        plt.close(fig)
-        logger.info("Saved loss curve plot -> %s", output_path)
-    except Exception as exc:
-        logger.warning("Could not generate matplotlib plot: %s", exc)
+    # Secondary y-axis for MAE (bps)
+    ax2_twin = ax2.twinx()
+    color_mae = "#d62728"
+    ax2_twin.plot(rounds, val_mae_bps, label="Validation MAE (bps)", color=color_mae, linestyle="-.", linewidth=2.0)
+    ax2_twin.set_ylabel("Spread Error (Basis Points)", color=color_mae, fontsize=11, fontweight="bold")
+    ax2_twin.tick_params(axis="y", labelcolor=color_mae)
 
+    # Combine legends
+    lines_1, labels_1 = ax2.get_legend_handles_labels()
+    lines_2, labels_2 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines_1 + lines_2, labels_1 + labels_2, loc="upper right", frameon=True)
+    ax2.set_title(f"{title_prefix}: Update Norm & Pricing Error Trajectory", fontsize=12, fontweight="bold")
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=300)
+    plt.close()
+    logger.info("Saved loss curve plot to %s", output_path)
     return output_path
 
 
 def update_results_table(
+    results_path: Path,
     model_name: str,
     rmse: float,
+    mae_bps: float,
     mape: float,
-    duration: float,
-    outputs_dir: Path,
+    train_time_sec: float,
+    notes: str = "",
 ) -> pd.DataFrame:
-    """Append or update a model row in the results table alongside baselines."""
-    results_path = outputs_dir / "baseline_results.csv"
+    """Update or create the benchmark Table I summary CSV.
+    
+    Harmonizes with models/train_centralized.py schema ('model', 'rmse_pct',
+    'mae_pct', 'mae_bps', 'mape_pct', 'train_time_s').
+    """
+    results_path.parent.mkdir(parents=True, exist_ok=True)
+    mae_pct = round(mae_bps / 100.0, 4)
 
     if results_path.exists():
-        df_results = pd.read_csv(results_path)
-        # Drop existing entry for this model if present to allow re-running
-        df_results = df_results[
-            df_results["model"] != model_name
-        ].copy()
+        df = pd.read_csv(results_path)
+        if "model" in df.columns:
+            new_row = {
+                "model": model_name,
+                "rmse_pct": round(rmse, 4),
+                "mae_pct": mae_pct,
+                "mae_bps": round(mae_bps, 2),
+                "mape_pct": round(mape, 2),
+                "train_time_s": round(train_time_sec, 2),
+            }
+            if "notes" in df.columns or notes:
+                new_row["notes"] = notes
+            match = df["model"] == model_name
+            if match.any():
+                for k, v in new_row.items():
+                    df.loc[match, k] = v
+            else:
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+        else:
+            model_col = "Model" if "Model" in df.columns else df.columns[0]
+            new_row = {
+                "Model": model_name,
+                "RMSE (%)": round(rmse, 4),
+                "MAE (bps)": round(mae_bps, 2),
+                "MAPE (%)": round(mape, 2),
+                "Training Time (s)": round(train_time_sec, 2),
+                "Notes": notes,
+            }
+            match = df[model_col] == model_name
+            if match.any():
+                for k, v in new_row.items():
+                    if k in df.columns:
+                        df.loc[match, k] = v
+            else:
+                df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     else:
-        df_results = pd.DataFrame(
-            columns=["model", "rmse_pct", "mape_pct", "train_time_s"]
-        )
-
-    new_row = pd.DataFrame([
-        {
-            "model": model_name,
-            "rmse_pct": round(rmse, 4),
-            "mape_pct": round(mape, 2),
-            "train_time_s": round(duration, 2),
+        new_row = {
+            "Model": model_name,
+            "RMSE (%)": round(rmse, 4),
+            "MAE (bps)": round(mae_bps, 2),
+            "MAPE (%)": round(mape, 2),
+            "Training Time (s)": round(train_time_sec, 2),
+            "Notes": notes,
         }
-    ])
+        df = pd.DataFrame([new_row])
 
-    df_updated = pd.concat([df_results, new_row], ignore_index=True)
-    df_updated.to_csv(results_path, index=False)
-    logger.info("Updated baseline results table -> %s", results_path)
-
-    # Print formatted comparison table
-    print("\n" + "=" * 65)
-    print("  GREEN BOND YIELD SPREAD PREDICTION ERROR")
-    print("  (Table I Reproduction — Centralized + Federated Baselines)")
-    print("=" * 65)
-    print(f"  {'Model':<30s} {'RMSE (%)':>12s} {'MAPE (%)':>12s}")
-    print("  " + "-" * 58)
-    for _, row in df_updated.iterrows():
-        print(
-            f"  {row['model']:<30s} {row['rmse_pct']:>12.4f} {row['mape_pct']:>12.2f}"
-        )
-    print("=" * 65)
-
-    print("\n  Paper's reported benchmarks (for comparison):")
-    print(f"  {'Linear Regression':<30s} {'0.68':>12s} {'7.9':>12s}")
-    print(f"  {'XGBoost':<30s} {'0.42':>12s} {'5.0':>12s}")
-    print(f"  {'FedAvg (no blockchain)':<30s} {'0.37':>12s} {'4.2':>12s}")
-    print(f"  {'Centralized NN':<30s} {'0.24':>12s} {'2.5':>12s}")
-    print(f"  {'GreenFed-XAI (Ours)':<30s} {'0.28':>12s} {'3.1':>12s}")
-    print()
-
-    return df_updated
+    df.to_csv(results_path, index=False)
+    logger.info("Updated benchmark results table at %s", results_path)
+    return df
 
 
 # ---------------------------------------------------------------------------
-# Main Orchestration Routine
+# CLI Entry Point
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    """CLI orchestrator for Federated Learning."""
     parser = argparse.ArgumentParser(
-        description="Run Phase 3: Federated Learning WITHOUT Blockchain (FedAvg)"
+        description="Run GreenFed-XAI Federated Learning Simulation across banks."
     )
     parser.add_argument(
         "--rounds",
         type=int,
         default=25,
-        help="Number of federated communication rounds (default: 25, paper: 100)",
+        help="Number of global communication rounds (default: 25)",
     )
     parser.add_argument(
         "--clients",
         type=int,
         default=8,
-        help="Number of participating banking institutions (default: 8)",
+        help="Number of participating banks (default: 8)",
     )
     parser.add_argument(
         "--local-epochs",
         type=int,
         default=3,
-        help="Local SGD epochs per client per round (default: 3)",
+        help="Number of local epochs per bank per round (default: 3)",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=64,
-        help="Local training mini-batch size (default: 64)",
+        help="Local mini-batch size for training (default: 64)",
     )
     parser.add_argument(
         "--lr",
         type=float,
         default=0.001,
-        help="Learning rate for local optimizers (default: 0.001)",
+        help="Local learning rate for Adam optimizer (default: 0.001)",
     )
     parser.add_argument(
-        "--non-iid",
-        action="store_true",
-        help="Use Dirichlet Non-IID partitioning instead of IID",
+        "--partition",
+        type=str,
+        default="iid",
+        choices=["iid", "dirichlet", "rating_tier"],
+        help="Partitioning scheme: 'iid', 'dirichlet', or 'rating_tier'",
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.5,
+        help="Dirichlet concentration parameter for non-IID partitioning (default: 0.5)",
     )
     parser.add_argument(
         "--aggregation",
         type=str,
         default="weighted",
         choices=["weighted", "equal"],
-        help="Aggregation weighting scheme: 'weighted' (sample-size proportional) or 'equal' (uniform client weighting)",
+        help="Aggregation weighting: 'weighted' (sample-size proportional) or 'equal' (uniform client weighting)",
     )
     parser.add_argument(
         "--blockchain",
         action="store_true",
-        help="Enable Phase 4 blockchain verification layer (GreenFed-XAI)",
+        help="Enable Phase 5 blockchain verification layer (GreenFed-XAI)",
     )
     parser.add_argument(
         "--tau",
         type=float,
         default=2.5,
-        help="Gradient norm threshold τ for poisoning defense (default: 2.5)",
+        help="Update norm threshold τ for poisoning defense (default: 2.5)",
     )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="Fast smoke-test mode with 3 rounds and 1 local epoch",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility (default: 42)",
+    )
+
     args = parser.parse_args()
 
-    data_dir = PROJECT_ROOT / "outputs"
     outputs_dir = PROJECT_ROOT / "outputs"
     outputs_dir.mkdir(parents=True, exist_ok=True)
 
+    eff_rounds = 3 if args.quick else args.rounds
+    eff_epochs = 1 if args.quick else args.local_epochs
+
+    logger.info(
+        "Initializing FL Orchestrator | Rounds: %d | Banks: %d | Partition: %s | Aggregation: %s | Seed: %d",
+        eff_rounds,
+        args.clients,
+        args.partition,
+        args.aggregation,
+        args.seed,
+    )
+
     # 1. Load Data Splits
     logger.info("Loading training, validation, and test datasets...")
-    train_df = pd.read_csv(data_dir / "bonds_train.csv")
-    val_df = pd.read_csv(data_dir / "bonds_val.csv")
-    test_df = pd.read_csv(data_dir / "bonds_test.csv")
+    train_df = pd.read_csv(outputs_dir / "bonds_train.csv")
+    val_df = pd.read_csv(outputs_dir / "bonds_val.csv")
+    test_df = pd.read_csv(outputs_dir / "bonds_test.csv")
 
-    # 2. Load Preprocessor
-    prep_path = data_dir / "preprocessor.pkl"
+    # 2. Preprocessing
+    prep_path = outputs_dir / "preprocessor.pkl"
     if not prep_path.exists():
         logger.info("Fitting fresh DataPreprocessor...")
         preprocessor = DataPreprocessor()
         X_train, y_train = preprocessor.fit_transform(train_df)
+        with open(prep_path, "wb") as f:
+            pickle.dump(preprocessor, f)
     else:
         with open(prep_path, "rb") as f:
             preprocessor = pickle.load(f)
@@ -505,23 +564,32 @@ def main() -> None:
     X_val, y_val = preprocessor.transform(val_df)
     X_test, y_test = preprocessor.transform(test_df)
 
-    # 3. Partition Training Records across K = 8 Banks
-    partitioner = BankDatasetPartitioner(n_clients=args.clients, val_ratio=0.15)
-    if args.non_iid:
+    # 3. Partition Datasets across Banks
+    partitioner = BankDatasetPartitioner(
+        n_clients=args.clients, val_ratio=0.15, random_seed=args.seed
+    )
+
+    if args.partition == "dirichlet":
         client_datasets = partitioner.partition_non_iid_dirichlet(
-            train_df, X_train, y_train, alpha=0.5
+            train_df, X_train, y_train, alpha=args.alpha
+        )
+    elif args.partition == "rating_tier":
+        client_datasets = partitioner.partition_non_iid_rating_tier(
+            train_df, X_train, y_train
         )
     else:
         client_datasets = partitioner.partition_iid(train_df, X_train, y_train)
 
     partitioner.print_partition_summary(client_datasets)
+    partitioner.export_partition_diagnostics_csv(
+        client_datasets, outputs_dir / "fl_bank_partitions.csv"
+    )
 
-    # 4. Instantiate Clients & Strategy
+    # 4. Instantiate Global Blueprint & Clients
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     input_dim = X_train.shape[1]
     global_model = GreenBondNN(input_dim=input_dim, dropout_rate=0.2).to(device)
 
-    # Initial parameter vector
     initial_weights = [
         val.cpu().detach().numpy().copy()
         for _, val in global_model.state_dict().items()
@@ -533,12 +601,13 @@ def main() -> None:
             dataset=cds,
             device=device,
             learning_rate=args.lr,
-            local_epochs=args.local_epochs,
+            local_epochs=eff_epochs,
             batch_size=args.batch_size,
         )
         for cds in client_datasets
     ]
 
+    # 5. Instantiate Aggregation Strategy
     if args.blockchain:
         logger.info(
             "Initializing BlockchainVerifiedStrategy (τ = %.2f, mock Fabric ledger, agg=%s)...",
@@ -557,7 +626,10 @@ def main() -> None:
         model_name = "GreenFed-XAI (blockchain-verified)"
         prefix = "greenfed_blockchain"
     else:
-        logger.info("Initializing baseline GreenFedAvgStrategy (no blockchain, agg=%s)...", args.aggregation)
+        logger.info(
+            "Initializing baseline GreenFedAvgStrategy (no blockchain, agg=%s)...",
+            args.aggregation,
+        )
         strategy = GreenFedAvgStrategy(
             eval_dataset=(X_val, y_val),
             model_template=global_model,
@@ -566,10 +638,10 @@ def main() -> None:
             min_fit_clients=args.clients,
             min_available_clients=args.clients,
         )
-        model_name = "FedAvg (no blockchain)"
-        prefix = "fedavg"
+        model_name = f"FedAvg ({args.aggregation})"
+        prefix = f"fedavg_{args.aggregation}"
 
-    # 5. Run Federated Learning Simulation
+    # 6. Execute Federated Simulation
     engine = FederatedSimulationEngine(
         clients=clients,
         strategy=strategy,
@@ -578,61 +650,53 @@ def main() -> None:
     )
 
     results = engine.run_rounds(
-        num_rounds=args.rounds,
-        local_epochs=args.local_epochs,
+        num_rounds=eff_rounds,
+        local_epochs=eff_epochs,
         batch_size=args.batch_size,
         learning_rate=args.lr,
     )
 
-    # 6. Save Artifacts & Deliverables
-    # a. Convergence history CSV
-    hist_path = outputs_dir / f"{prefix}_convergence.csv"
-    strategy.save_history_csv(hist_path)
+    # 7. Export Outputs & Artifacts
+    history_df = results["history_df"]
+    history_csv = outputs_dir / f"{prefix}_convergence.csv"
+    history_df.to_csv(history_csv, index=False)
+    logger.info("Saved convergence telemetry to %s", history_csv)
 
-    # b. Loss curve plot
     plot_path = outputs_dir / f"{prefix}_loss_curve.png"
-    generate_loss_curve_plot(results["history_df"], plot_path)
+    generate_loss_curve_plot(history_df, plot_path, title_prefix=model_name)
 
-    # c. Final model weights
-    model_path = outputs_dir / f"{prefix}_model.pt"
+    # Export test set predictions
+    preds_df = pd.DataFrame({
+        "bond_id": test_df["bond_id"],
+        "actual_yield_spread": y_test.flatten(),
+        "predicted_yield_spread": results["y_pred"],
+        "absolute_error_bps": np.abs(y_test.flatten() - results["y_pred"]) * 100.0,
+    })
+    preds_csv = outputs_dir / f"{prefix}_predictions.csv"
+    preds_df.to_csv(preds_csv, index=False)
+    logger.info("Saved test set predictions to %s", preds_csv)
+
+    # Update Table I
+    update_results_table(
+        results_path=outputs_dir / "baseline_results.csv",
+        model_name=model_name,
+        rmse=results["test_rmse"],
+        mae_bps=results["test_mae_bps"],
+        mape=results["test_mape"],
+        train_time_sec=results["total_duration"],
+        notes=f"T={eff_rounds}, K={args.clients}, E={eff_epochs}, {args.partition}, {args.aggregation}",
+    )
+
+    # Save final model checkpoint
+    model_checkpoint_path = outputs_dir / f"{prefix}_model.pt"
     keys = list(global_model.state_dict().keys())
-    state_dict = {
+    final_state_dict = {
         k: torch.tensor(v, dtype=torch.float32)
         for k, v in zip(keys, results["final_weights"])
     }
-    torch.save(state_dict, model_path)
-    logger.info("Saved final model weights -> %s", model_path)
-
-    # d. Predictions CSV
-    preds_path = outputs_dir / f"{prefix}_predictions.csv"
-    pd.DataFrame({
-        "bond_id": test_df["bond_id"].values,
-        "y_true": y_test,
-        "y_pred": results["y_pred"],
-        "absolute_error": np.abs(y_test - results["y_pred"]),
-    }).to_csv(preds_path, index=False)
-    logger.info("Saved test predictions -> %s", preds_path)
-
-    # e. Blockchain audit export if in blockchain mode
-    if args.blockchain and isinstance(strategy, BlockchainVerifiedStrategy):
-        audit_csv_path = outputs_dir / "blockchain_audit_history.csv"
-        strategy.save_audit_csv(audit_csv_path)
-        ledger_export_path = outputs_dir / "blockchain_ledger_dump.json"
-        with open(ledger_export_path, "w", encoding="utf-8") as f:
-            f.write(strategy.blockchain.export_chain_json())
-        logger.info("Exported full blockchain ledger -> %s", ledger_export_path)
-        strategy.print_verification_summary()
-
-    # f. Append to Table I results
-    update_results_table(
-        model_name,
-        results["test_rmse"],
-        results["test_mape"],
-        results["total_duration"],
-        outputs_dir,
-    )
+    torch.save(final_state_dict, model_checkpoint_path)
+    logger.info("Saved final global model checkpoint to %s", model_checkpoint_path)
 
 
 if __name__ == "__main__":
     main()
-

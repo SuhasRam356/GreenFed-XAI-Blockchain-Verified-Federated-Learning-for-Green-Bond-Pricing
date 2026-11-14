@@ -921,6 +921,88 @@ class SmartContract:
 
         return hasher.hexdigest()
 
+    @staticmethod
+    def compute_canonical_update_commitment(
+        parameters: List[np.ndarray],
+        client_id: int,
+        round_idx: int,
+        model_version: str = "1.0.0",
+        domain_tag: str = "greenfed.fl.update.v1",
+        tensor_names: Optional[List[str]] = None,
+    ) -> str:
+        r"""Compute canonical SHA-256 update commitment with domain separation.
+
+        Binds model parameters to their exact execution context to prevent
+        cross-round, cross-client, and cross-model replay attacks:
+        - Cryptographic domain tag
+        - Model version string
+        - Round index (uint32 big-endian)
+        - Client/Bank identifier (uint32 big-endian)
+        - Number of parameter tensors (uint32 big-endian)
+
+        Each tensor is canonically serialized:
+        - Layer/tensor name (UTF-8)
+        - Dtype tag ("float32")
+        - Number of dimensions (uint16 big-endian)
+        - Shape dimensions (tuple of uint32 big-endian)
+        - Contiguous, standard IEEE-754 little-endian float32 bytes
+
+        Parameters:
+            parameters: List of NumPy parameter arrays.
+            client_id: ID of the submitting institution.
+            round_idx: Global communication round.
+            model_version: Target model architecture version.
+            domain_tag: Cryptographic domain separation identifier.
+            tensor_names: Optional explicit names for parameter tensors.
+
+        Returns:
+            64-character hexadecimal SHA-256 digest string.
+        """
+        import struct
+
+        hasher = hashlib.sha256()
+
+        # Domain separation header
+        hasher.update(domain_tag.encode("utf-8"))
+        hasher.update(b"\x00")
+        hasher.update(model_version.encode("utf-8"))
+        hasher.update(b"\x00")
+
+        # Context fields (Big-Endian fixed-width integers)
+        hasher.update(struct.pack(">II", round_idx, client_id))
+        hasher.update(struct.pack(">I", len(parameters)))
+
+        for i, param in enumerate(parameters):
+            name = (
+                tensor_names[i]
+                if tensor_names and i < len(tensor_names)
+                else f"param_{i}"
+            )
+            hasher.update(name.encode("utf-8"))
+            hasher.update(b"\x00")
+
+            # Canonical float32 conversion with explicit little-endian byte order
+            canonical_arr = np.ascontiguousarray(param, dtype=np.float32)
+            hasher.update(b"float32\x00")
+
+            # Shape encoding
+            shape = canonical_arr.shape
+            hasher.update(struct.pack(">H", len(shape)))
+            for dim in shape:
+                hasher.update(struct.pack(">I", dim))
+
+            # Raw bytes (float32 little-endian)
+            if canonical_arr.dtype.byteorder == ">" or (
+                canonical_arr.dtype.byteorder == "=" and struct.pack("H", 1)[0] == 0
+            ):
+                le_bytes = canonical_arr.byteswap().tobytes()
+            else:
+                le_bytes = canonical_arr.tobytes()
+
+            hasher.update(le_bytes)
+
+        return hasher.hexdigest()
+
     # -----------------------------------------------------------------------
     # Hash Submission (Phase 1a — Commitment)
     # -----------------------------------------------------------------------
@@ -1032,6 +1114,15 @@ class SmartContract:
             return False, computed_hash, ""
 
         hash_matches = computed_hash == submitted_hash
+
+        if not hash_matches:
+            # Check if submitted hash was generated using canonical commitment
+            canonical_hash = self.compute_canonical_update_commitment(
+                parameters, client_id=client_id, round_idx=round_idx
+            )
+            if canonical_hash == submitted_hash:
+                hash_matches = True
+                computed_hash = canonical_hash
 
         if not hash_matches:
             logger.warning(

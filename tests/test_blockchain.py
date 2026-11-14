@@ -608,3 +608,164 @@ def test_quorum_enforcement_in_blockchain_strategy() -> None:
     accepted, meta = strategy.verify_and_filter_updates(1, fit_results)
     # Because quorum (1/4 = 25% <= 50%) failed, accepted_results must be empty!
     assert len(accepted) == 0
+
+
+# =============================================================================
+# 7. Phase 5 Scientific Integrity & Attack Boundary Tests
+# =============================================================================
+
+
+def test_canonical_update_commitment_determinism_and_binding(
+    dummy_parameters: List[np.ndarray],
+) -> None:
+    """Canonical update commitment must bind to round, client, and domain tags."""
+    # 1. Determinism
+    h1 = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=2, round_idx=5
+    )
+    h2 = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=2, round_idx=5
+    )
+    assert h1 == h2
+    assert len(h1) == 64
+
+    # 2. Cross-client replay prevention: same weights, different client ID -> different commitment
+    h_client3 = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=3, round_idx=5
+    )
+    assert h1 != h_client3
+
+    # 3. Cross-round replay prevention: same weights, different round ID -> different commitment
+    h_round6 = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=2, round_idx=6
+    )
+    assert h1 != h_round6
+
+    # 4. Domain separation: different domain tag -> different commitment
+    h_domain = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=2, round_idx=5, domain_tag="greenfed.fl.update.v2"
+    )
+    assert h1 != h_domain
+
+
+def test_smart_contract_canonical_commitment_verification(
+    smart_contract: SmartContract, dummy_parameters: List[np.ndarray]
+) -> None:
+    """Smart contract must verify update submitted with canonical commitment."""
+    canonical_hash = SmartContract.compute_canonical_update_commitment(
+        dummy_parameters, client_id=1, round_idx=4
+    )
+    smart_contract.submit_hash(client_id=1, parameter_hash=canonical_hash, round_idx=4)
+
+    result = smart_contract.process_update(
+        client_id=1,
+        parameters=dummy_parameters,
+        grad_norm=1.5,
+        round_idx=4,
+    )
+    assert result.status == VerificationStatus.ACCEPTED
+    assert result.hash_valid is True
+    assert result.norm_valid is True
+
+
+def test_legitimate_large_update_rejection(
+    smart_contract: SmartContract, dummy_parameters: List[np.ndarray]
+) -> None:
+    """Demonstrate that an honest client with legitimate large update can be rejected if tau is too strict.
+
+    This empirically proves the paper & guide principle:
+    'A norm filter may detect some large attacks, but honest heterogeneous
+    clients may be rejected. Do not describe it as a complete poisoning defense.'
+    """
+    param_hash = SmartContract.compute_parameter_hash(dummy_parameters)
+    smart_contract.submit_hash(client_id=4, parameter_hash=param_hash, round_idx=1)
+
+    # Legitimate bank with high portfolio volatility or non-IID drift: norm = 3.1 > tau = 2.5
+    result = smart_contract.process_update(
+        client_id=4,
+        parameters=dummy_parameters,
+        grad_norm=3.1,  # Exceeds tau = 2.5
+        round_idx=1,
+    )
+    # Must be rejected due to norm threshold despite honest valid hash
+    assert result.status == VerificationStatus.REJECTED_NORM_EXCEEDED
+    assert result.hash_valid is True
+    assert result.norm_valid is False
+
+
+def test_malicious_small_update_stealth(
+    smart_contract: SmartContract, dummy_parameters: List[np.ndarray]
+) -> None:
+    """Demonstrate that an adversary with valid hash and small norm bypasses filtering.
+
+    This empirically proves the paper & guide principle:
+    'A hash match checks that an update matches its earlier commitment;
+    a malicious client can commit a hash of a malicious update.
+    Hashing does not prove honest training or benign data.'
+    """
+    # Malicious client perturbs parameters subtly
+    poisoned_params = [p + 0.005 for p in dummy_parameters]
+    # Malicious client commits a perfectly valid SHA-256 hash of its poisoned update
+    poisoned_hash = SmartContract.compute_parameter_hash(poisoned_params)
+    smart_contract.submit_hash(client_id=5, parameter_hash=poisoned_hash, round_idx=2)
+
+    # Malicious update kept under norm threshold (norm = 1.4 <= 2.5)
+    result = smart_contract.process_update(
+        client_id=5,
+        parameters=poisoned_params,
+        grad_norm=1.4,
+        round_idx=2,
+    )
+    # Passes both checks because hash matches commitment and norm <= tau!
+    assert result.status == VerificationStatus.ACCEPTED
+    assert result.hash_valid is True
+    assert result.norm_valid is True
+
+
+def test_no_accepted_updates_fallback_preserves_global_weights() -> None:
+    """When 100% of client updates are rejected, strategy must preserve previous model weights without crashing."""
+    device = torch.device("cpu")
+    model = GreenBondNN(input_dim=5, dropout_rate=0.0).to(device)
+
+    # Set up strategy with initial weights
+    initial_ndarrays = [p.detach().numpy().copy() for p in model.parameters()]
+    from flwr.common import ndarrays_to_parameters
+
+    initial_parameters = ndarrays_to_parameters(initial_ndarrays)
+
+    strategy = BlockchainVerifiedStrategy(
+        model_template=model,
+        device=device,
+        tau=2.5,
+        mining_difficulty=1,
+        initial_parameters=initial_parameters,
+    )
+    # Set latest weights
+    strategy.latest_global_ndarrays = initial_ndarrays
+
+    # All 4 clients submit updates with massive norm 50.0 > 2.5
+    fit_results = []
+    p_mock = [np.ones((5, 128), dtype=np.float32)]
+    for cid in range(4):
+        client_proxy = type("ClientProxyMock", (), {"cid": str(cid)})()
+        fit_res = type(
+            "FitResMock",
+            (),
+            {
+                "parameters": type("ParamMock", (), {"ndarrays": p_mock})(),
+                "num_examples": 100,
+                "metrics": {"client_id": cid, "grad_norm": 50.0},
+            },
+        )()
+        fit_results.append((client_proxy, fit_res))
+
+    # Run aggregate_fit
+    aggregated_params, metrics = strategy.aggregate_fit(
+        server_round=1, results=fit_results, failures=[]
+    )
+
+    # Fallback must be triggered
+    assert metrics["status"] == "fallback_previous_weights"
+    assert metrics["accepted_count"] == 0
+    assert aggregated_params is not None
+
