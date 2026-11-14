@@ -11,7 +11,9 @@
 | **Phase 6** | Attack Scenarios & Evaluation Matrix | Completed | `attacks/fl_attacks.py`, `experiments/run_matrix.py`, complete 11-scenario benchmark, $\tau$-sensitivity sweep. |
 | **Phase 7** | Explainable AI (SHAP) & Audit Trail | Completed | `xai/shap_explainer.py`, `audit/audit_manager.py`, `tests/test_xai_audit.py`, feature importance rankings, sensitivity analysis, immutable audit logs. |
 | **Phase 8** | Hyperledger Fabric Integration | Completed (Code) | `chain/chaincode/smart_contract.go` (Go 1.27 compiled and tested). |
-| **Phase 9** | Interactive Dashboard & Final Handover | Completed | Next.js 14 + Tailwind CSS frontend (`frontend/`), FastAPI backend (`api/main.py`), 9 API integration tests (`tests/test_api.py`), one-click launchers (`run_dashboard.py`, `run_dashboard.bat`). |
+| **Phase 9** | Interactive Dashboard & Handover | Completed | Next.js 14 + Tailwind CSS frontend (`frontend/`), FastAPI backend (`api/main.py`), 9 API tests (`tests/test_api.py`), one-click launchers (`run_dashboard.py`, `run_dashboard.bat`). |
+| **Phase 10** | IEEE Paper & Viva Defense Package | Completed | `docs/IEEE_PAPER_MANUSCRIPT.md`, `docs/VIVA_VOICE_DEFENSE_GUIDE.md`, `docs/PRESENTATION_SLIDES_OUTLINE.md`. |
+| **Phase 11** | Containerization & DevOps CI/CD | Completed | `docker-compose.yml`, `Dockerfile.backend`, `frontend/Dockerfile`, `.github/workflows/ci.yml`, `.env.example`. |
 
 ---
 
