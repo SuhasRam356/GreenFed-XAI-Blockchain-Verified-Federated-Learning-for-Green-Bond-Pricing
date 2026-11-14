@@ -320,3 +320,4 @@ class TestEndToEndPipeline:
         assert (tmp_path / "shap_individual_waterfall.png").exists()
         assert (tmp_path / "shap_feature_importance.csv").exists()
         assert (tmp_path / "carbon_score_sensitivity.json").exists()
+

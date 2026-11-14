@@ -27,3 +27,8 @@ Thumbs.db
 *.exe
 chain/chaincode/*.exe
 
+
+# Frontend artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/out/

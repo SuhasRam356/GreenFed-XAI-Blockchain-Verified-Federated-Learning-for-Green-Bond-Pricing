@@ -331,3 +331,4 @@ class AuditManager:
         verification["tamper_detected"] = (verification["is_valid"] is False)
 
         return verification
+
