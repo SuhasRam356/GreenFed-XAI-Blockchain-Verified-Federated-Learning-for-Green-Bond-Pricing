@@ -9,9 +9,28 @@
 | **Phase 4** | Federated Learning Reference | Completed | `fl/dataset_partitioner.py`, `fl/client.py`, `fl/strategy_fedavg.py`, `fl/server.py`. |
 | **Phase 5** | Blockchain Verification & Norm Filter | Completed | `chain/mock_ledger.py`, `fl/strategy_blockchain.py`, Table I baseline update. |
 | **Phase 6** | Attack Scenarios & Evaluation Matrix | Completed | `attacks/fl_attacks.py`, `experiments/run_matrix.py`, complete 11-scenario benchmark, $\tau$-sensitivity sweep. |
-| **Phase 7** | Explainable AI (SHAP) & Audit Trail | Next | `xai/`, SHAP feature attributions, tamper-proof off-chain audit logs. |
+| **Phase 7** | Explainable AI (SHAP) & Audit Trail | Completed | `xai/shap_explainer.py`, `audit/audit_manager.py`, `tests/test_xai_audit.py`, feature importance rankings, sensitivity analysis, immutable audit logs. |
 | **Phase 8** | Hyperledger Fabric Integration | Completed (Code) | `chain/chaincode/smart_contract.go` (Go 1.27 compiled and tested). |
-| **Phase 9** | Interactive Dashboard & Final Handover | Scheduled | Streamlit demo, final IEEE academic report, viva preparation guide. |
+| **Phase 9** | Interactive Dashboard & Final Handover | Next | Streamlit demo, final IEEE academic report, viva preparation guide. |
+
+---
+
+## Phase 7 Explainable AI & Off-Chain Audit Trail
+
+### Key Results Summary
+- **SHAP Explanation Engine**: `GreenBondXAIExplainer` utilizes `shap.KernelExplainer` on the PyTorch neural network baseline with a 100-sample k-means/random representative background partition. Additivity axiom verified with maximum residual error $< 10^{-6}$.
+- **Global Feature Attributions**:
+  1. `tenor`: 22.29% (mean |SHAP| = 0.2396)
+  2. `credit_rating_encoded`: 22.20% (mean |SHAP| = 0.2385)
+  3. `carbon_footprint_score`: 19.36% (mean |SHAP| = 0.2081)
+  4. `esg_controversy_score`: 18.20% (mean |SHAP| = 0.1956)
+  5. `coupon_rate`: 17.95% (mean |SHAP| = 0.1929)
+- **10-Point Carbon Score Model Sensitivity**: Evaluated across 1,345 eligible test bonds ($C_t \le 90$); observed mean yield spread delta is $-2.45\text{ bps}$ (median $-2.53\text{ bps}$, std $15.08\text{ bps}$, synthetic generator target $-12\text{ bps}$). Explicitly documented as model sensitivity under synthetic generation, not a causal macroeconomic guarantee.
+- **Off-Chain Audit Trail & Tamper Detection**:
+  - Full pricing audit record serialized to deterministic, canonical JSON format with sorted keys and normalized floating-point precision.
+  - 32-byte SHA-256 cryptographic digest committed on-chain to `MockBlockchain`.
+  - Cryptographic verification re-computes digest and validates match with ledger.
+  - Zero-tolerance tamper detection demonstrated: any 1-bit alteration to features, predictions, or attributions produces digest mismatch (`tamper_detected == True`).
 
 ---
 

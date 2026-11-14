@@ -1,0 +1,6 @@
+feature,mean_abs_shap,importance_pct
+tenor,0.23955385,22.290016
+credit_rating_encoded,0.23854798,22.19642
+carbon_footprint_score,0.20809594,19.362919
+esg_controversy_score,0.19562465,18.20249
+coupon_rate,0.19289124,17.94815

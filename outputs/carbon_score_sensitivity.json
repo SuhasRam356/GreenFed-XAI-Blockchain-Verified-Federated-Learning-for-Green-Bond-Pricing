@@ -1,0 +1,13 @@
+{
+  "score_increase": 10.0,
+  "n_eligible": 1345,
+  "total_bonds": 1500,
+  "eligible_fraction_pct": 89.67,
+  "mean_delta_bps": -2.45,
+  "median_delta_bps": -2.53,
+  "std_delta_bps": 15.08,
+  "min_delta_bps": -36.73,
+  "max_delta_bps": 35.14,
+  "synthetic_target_effect_bps": -12.0,
+  "interpretation_note": "A 10.0-point increase in carbon score produces a mean yield spread reduction of 2.45 bps. This reflects model sensitivity under the synthetic generator (-12 bps per 10 points), not a causal macroeconomic guarantee."
+}
