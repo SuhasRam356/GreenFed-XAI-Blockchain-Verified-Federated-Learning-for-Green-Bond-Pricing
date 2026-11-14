@@ -90,3 +90,4 @@
 - **Interactive Capabilities**: Real-time green bond pricing, dynamic SHAP waterfall chart, live IoT telemetry table, round attack defense simulator, and cryptographic tamper testing lab.
 - **Summary**: GreenFed-XAI establishes a verified, regulatory-compliant foundation for global institutional green bond pricing.
 - **Q&A**: Inviting questions from the committee.
+

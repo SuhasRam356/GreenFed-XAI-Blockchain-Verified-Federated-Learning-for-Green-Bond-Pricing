@@ -26,3 +26,4 @@ COPY --from=base /app/public ./public 2>/dev/null || true
 EXPOSE 3000
 
 CMD ["npm", "start"]
+

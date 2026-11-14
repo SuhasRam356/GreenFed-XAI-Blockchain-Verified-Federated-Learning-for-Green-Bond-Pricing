@@ -1,222 +1,178 @@
 # GreenFed-XAI: Blockchain-Verified Federated Learning for Green Bond Pricing
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Framework: Flower](https://img.shields.io/badge/FL-Flower%20(flwr)-orange.svg)](https://flower.ai/)
 [![PyTorch](https://img.shields.io/badge/ML-PyTorch-red.svg)](https://pytorch.org/)
-[![Blockchain: Mock Fabric](https://img.shields.io/badge/ledger-Hyperledger%20Fabric%20%7C%20Mock-blueviolet.svg)]()
-[![Tests: 112 Passed](https://img.shields.io/badge/tests-112%2F112%20passed-brightgreen.svg)]()
+[![XAI: SHAP](https://img.shields.io/badge/XAI-SHAP%200.51-brightgreen.svg)](https://github.com/shap/shap)
+[![Blockchain: Mock Fabric | Go Chaincode](https://img.shields.io/badge/ledger-Hyperledger%20Fabric%20%7C%20Mock-blueviolet.svg)]()
+[![Frontend: Next.js 14](https://img.shields.io/badge/frontend-Next.js%2014%20%7C%20Tailwind-black.svg)](https://nextjs.org/)
+[![Backend: FastAPI](https://img.shields.io/badge/backend-FastAPI-teal.svg)](https://fastapi.tiangolo.com/)
+[![Tests: 169 Passed](https://img.shields.io/badge/tests-169%2F169%20passed-brightgreen.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An end-to-end implementation of **GreenFed-XAI**, a framework combining blockchain-verified IoT carbon telemetry, decentralized federated learning across financial institutions, and explainable AI (XAI) for trustworthy green bond pricing.
+An enterprise-grade, publication-ready implementation of **GreenFed-XAI**, a decentralized AI and cryptographic auditing framework combining blockchain-verified IoT carbon telemetry, Byzantine-resilient federated learning across banking institutions, and game-theoretic Explainable AI (SHAP) for trustworthy green bond pricing.
 
 Based on the research paper:
-> *"Blockchain-Verified Federated Learning for ESG-Driven Green Bond Pricing: An Explainable AI Approach with IoT-Enabled Carbon Footprint Oracles"*
+> *"Blockchain-Verified Federated Learning for ESG-Driven Green Bond Pricing: An Explainable AI Approach with IoT-Enabled Carbon Footprint Oracles"*  
+> **Jasleen Kaur** (Indian Institute of Forest Management Bhopal) & **Suhas Ram**
 
 ---
 
-## 📌 Project Architecture
+## 📌 System Architecture
 
 ```
-                               ┌────────────────────────┐
-                               │   IoT Telemetry Layer  │
-                               │  (500 virtual sensors) │
-                               └───────────┬────────────┘
-                                           │
-                                           ▼
-                               ┌────────────────────────┐
-                               │ Blockchain Validator   │
-                               │   (Oracle Smart Gate)  │
-                               └───────────┬────────────┘
-                                           │
-                     ┌─────────────────────┴─────────────────────┐
-                     ▼                                           ▼
-       ┌───────────────────────────┐               ┌───────────────────────────┐
-       │ Bank 0 .. Bank 3 (Tier-1) │               │ Bank 4 .. Bank 7 (Reg'l)  │
-       │ Local Private D_k (Train) │               │ Local Private D_k (Train) │
-       └─────────────┬─────────────┘               └─────────────┬─────────────┘
-                     │                                           │
-                     └─────────────────────┬─────────────────────┘
-                                           │  Uploads Δw_k & ||dw||_2
-                                           ▼
-                               ┌────────────────────────┐
-                               │  Federated Aggregator  │
-                               │      (FedAvg Core)     │
-                               └───────────┬────────────┘
-                                           │
-                                           ▼
-                               ┌────────────────────────┐
-                               │  Global Pricing Model  │
-                               │  (128→64→32 Neural Net)│
-                               └────────────────────────┘
+                                ┌────────────────────────┐
+                                │   IoT Telemetry Layer  │
+                                │ (GHG, Energy, Water)   │
+                                └───────────┬────────────┘
+                                            │
+                                            ▼
+                                ┌────────────────────────┐
+                                │ Blockchain Validator   │
+                                │ (Oracle Gate & F-Fill) │
+                                └───────────┬────────────┘
+                                            │
+                      ┌─────────────────────┴─────────────────────┐
+                      ▼                                           ▼
+        ┌───────────────────────────┐               ┌───────────────────────────┐
+        │ Bank 1 .. Bank 4 (Global) │               │ Bank 5 .. Bank 8 (Reg'l)  │
+        │ Local Private D_k (Train) │               │ Local Private D_k (Train) │
+        └─────────────┬─────────────┘               └─────────────┬─────────────┘
+                      │                                           │
+                      └─────────────────────┬─────────────────────┘
+                                            │  Uploads Δw_k & Domain-Tagged Hashes
+                                            ▼
+                                ┌────────────────────────┐
+                                │ Blockchain Ledger Node │
+                                │ (Norm Filter: τ=2.50)  │
+                                └───────────┬────────────┘
+                                            │  Quorum (>50%) & Valid Updates Only
+                                            ▼
+                                ┌────────────────────────┐
+                                │  Federated Aggregator  │
+                                │ (Robust FedAvg Engine) │
+                                └───────────┬────────────┘
+                                            │
+                      ┌─────────────────────┴─────────────────────┐
+                      ▼                                           ▼
+        ┌───────────────────────────┐               ┌───────────────────────────┐
+        │  PyTorch Pricing Model    │               │  Explainable AI (SHAP)    │
+        │ (128→64→32 Neural Net)    │               │ (Additivity Verified)     │
+        └─────────────┬─────────────┘               └─────────────┬─────────────┘
+                      │                                           │
+                      └─────────────────────┬─────────────────────┘
+                                            │
+                                            ▼
+                                ┌────────────────────────┐
+                                │ Off-Chain JSON Audit   │
+                                │ (32-Byte SHA-256 Hash) │
+                                └────────────────────────┘
 ```
 
 ---
 
-## 🚀 Key Framework Modules
+## 🚀 End-to-End Implementation Milestones (Phase 0 — Phase 11)
 
-### 1. Phase 1 — Dataset Generation & IoT Telemetry
-- **Synthetic Bond Engine (`data/generate_bonds.py`)**: 10,000 realistic green bond issues spanning credit ratings (AAA to B), tenor (1–30 yrs), coupon rate (1–8%), ESG controversy score (0–10), and carbon footprint score ($C_t \in [0, 100]$).
-  $$\text{spread} = \text{base}(\text{rating}) + 0.03 \cdot \text{tenor} + 0.12 \cdot \text{controversy} - 0.012 \cdot C_t + \epsilon$$
-  Split into **7,000 train**, **1,500 validation**, and **1,500 test** samples.
-- **IoT Sensor Simulator (`iot/simulate_sensors.py`)**: Simulates 500 virtual project site sensors with hourly telemetry, random walk drift, 5% Gaussian noise, and 5% malicious sensors injecting +20% positive bias (simulating greenwashing).
-- **Oracle Validator (`iot/oracle_validator.py`)**: Smart contract oracle gate enforcing:
-  - Jump check: rejects readings where $|\Delta C_t| > \theta$ ($\theta = 15$).
-  - Certificate expiry check: rejects expired sensors.
-
-### 2. Phase 2 — Centralized Baseline Benchmarks
-- **Model Architecture (`models/nn_model.py`)**: Deep Neural Network matching the paper:
-  $$\text{Linear}(128) \to \text{ReLU} \to \text{Dropout}(0.2) \to \text{Linear}(64) \to \text{ReLU} \to \text{Dropout}(0.2) \to \text{Linear}(32) \to \text{ReLU} \to \text{Dropout}(0.2) \to \text{Linear}(1)$$
-- **Preprocessing Pipeline (`models/preprocessing.py`)**: Ordinal encoding of credit ratings with StandardScaler fitted strictly on training data.
-- **Baseline Models (`models/train_centralized.py`)**: Linear Regression, XGBoost, and Centralized Neural Network (Upper Bound).
-
-### 3. Phase 3 — Federated Learning WITHOUT Blockchain
-- **Bank Partitioner (`fl/dataset_partitioner.py`)**: Partitions private datasets among $K = 8$ banking institutions (`Bank_0_NordicGreen` to `Bank_7_MeridianHoldings`). Supports both IID and Dirichlet Non-IID distributions.
-- **Flower NumPyClient (`fl/client.py`)**: Decentralized local PyTorch training with gradient norm ($\|\Delta w\|_2$) computation.
-- **Strategy (`fl/strategy_fedavg.py`)**: Weighted Federated Averaging ($w_{t+1} = \sum \frac{|D_k|}{|D|} w_k$) with round-by-round centralized validation evaluation.
-- **Server Runner (`fl/server.py`)**: End-to-end multi-round federated training engine producing convergence curves and metrics.
-
-### 4. Phase 4 — Blockchain Verification Layer (Core Novelty)
-- **Mock Blockchain Ledger (`chain/mock_ledger.py`)**: Production-grade permissioned ledger with SHA-256 block linking, proof-of-work consensus simulation, tamper detection, and query audit trail.
-- **Smart Contract Engine (`chain/mock_ledger.py`)**:
-  - `submit_hash(client_id, hash, round)`: On-chain SHA-256 parameter commitment.
-  - `verify_update(...)`: Two-phase verification checking hash integrity and enforcing the gradient norm constraint $\|\Delta w\|_2 \le \tau$ ($\tau = 2.5$).
-  - `process_update(...)`: Auto-categorizes into `ACCEPTED`, `REJECTED_NORM_EXCEEDED`, `REJECTED_HASH_MISMATCH`, or `REJECTED_BOTH`.
-- **Hyperledger Fabric Chaincode (`chain/chaincode/smart_contract.go`)**: Go implementation of the smart contract for Hyperledger Fabric 2.4+ production deployment via peer CLI.
-- **Blockchain Strategy (`fl/strategy_blockchain.py`)**: `BlockchainVerifiedStrategy` extending FedAvg to verify model updates on-chain and filter out poisoning attacks prior to parameter aggregation.
+| Phase | Milestone Name | Status | Key Deliverables & Artifacts |
+|:---:|:---|:---:|:---|
+| **0** | Scope, Foundations & Setup | Completed | Pinned dependencies, locked environment, cataloged assumptions. |
+| **1** | Synthetic Bond Data & Features | Completed | `data/generate_bonds.py`, 10,000 bonds, train/val/test splits. |
+| **2** | IoT Sensor Simulation & Oracle Gate | Completed | `iot/simulate_sensors.py`, `iot/oracle_validator.py`, boundary screening, forward-fill fallback. |
+| **3** | Centralized Baseline Models | Completed | `models/train_centralized.py` (Linear Regression, XGBoost, NN with MAE in bps & near-zero MAPE policy). |
+| **4** | Federated Learning Reference | Completed | `fl/dataset_partitioner.py` (Dirichlet Non-IID), `fl/client.py`, `fl/strategy_fedavg.py`, `fl/server.py`. |
+| **5** | Blockchain Verification & Norm Filter | Completed | `chain/mock_ledger.py`, `fl/strategy_blockchain.py`, domain-tagged commitments, $\tau = 2.50$ norm filtering. |
+| **6** | Attack Scenarios & Evaluation Matrix | Completed | `attacks/fl_attacks.py`, `experiments/run_matrix.py`, 11-scenario benchmark, $\tau$-sensitivity sweep. |
+| **7** | Explainable AI (SHAP) & Audit Trail | Completed | `xai/shap_explainer.py`, `audit/audit_manager.py`, additivity axiom verification ($< 10^{-6}$), off-chain JSON storage. |
+| **8** | Hyperledger Fabric Integration | Completed | `chain/chaincode/smart_contract.go` (Go 1.27 smart contract for Fabric 2.4+). |
+| **9** | Enterprise Interactive Dashboard | Completed | Next.js 14 + Tailwind CSS dashboard (`frontend/`), FastAPI backend (`api/main.py`), 9 REST API tests. |
+| **10** | IEEE Paper & Viva Defense Package | Completed | `docs/IEEE_PAPER_MANUSCRIPT.md`, `docs/VIVA_VOICE_DEFENSE_GUIDE.md`, `docs/PRESENTATION_SLIDES_OUTLINE.md`. |
+| **11** | Containerization & DevOps CI/CD | Completed | `docker-compose.yml`, `Dockerfile.backend`, `frontend/Dockerfile`, `ci/github-workflow.yml`, `.env.example`. |
 
 ---
 
-## 📊 Benchmark Results (Table I Reproduction)
+## 📊 Benchmark Results Matrix (11 Scenarios)
 
-Evaluated on the 1,500 held-out test sample benchmark:
+Evaluated across 1,500 held-out test bonds under 100 federated communication rounds:
 
-| Model | Architecture / Method | Privacy Preservation | RMSE (%) | MAPE (%) |
-|:---|:---|:---:|:---:|:---:|
-| **Linear Regression** | Ordinary Least Squares | None (Centralized) | 0.1268 | 3.70% |
-| **XGBoost** | 300 estimators, depth 6 | None (Centralized) | 0.0909 | 2.80% |
-| **Centralized NN** | 128→64→32, ReLU, Dropout 0.2 | None (Upper Bound) | **0.0904** | **2.83%** |
-| **FedAvg (no blockchain)** | Federated Learning (8 Banks) | **Decentralized (Complete)** | **0.1068** | **3.31%** |
-| **GreenFed-XAI (blockchain-verified)** | **Blockchain + FL ($\tau = 2.5$)** | **Decentralized + Tamper-Proof** | **0.1242** | **3.58%** |
+| Scenario ID | Scenario Name | Threat Model / Defense Mechanism | RMSE (%) | MAE (bps) | MAPE (%) | TPR (%) | FPR (%) |
+|:---:|:---|:---|:---:|:---:|:---:|:---:|:---:|
+| **1** | Centralized Clean Reference | None (Centralized Upper Bound) | 0.0868 | 6.93 | 2.72% | N/A | N/A |
+| **2** | Clean FedAvg (Weighted) | Sample-Weighted (No Defense) | 0.1506 | 12.12 | 4.44% | N/A | N/A |
+| **3** | Clean FedAvg (Equal) | Uniform Client Averaging | 0.1506 | 12.12 | 4.44% | N/A | N/A |
+| **4** | Clean FedAvg + Hash Logging | Blockchain Hash Audit (No Norm Filter) | 0.1506 | 12.12 | 4.44% | N/A | 0.0% |
+| **5** | Clean FedAvg + Norm Filter | Full GreenFed-XAI Baseline ($\tau = 2.50$) | 0.1506 | 12.12 | 4.44% | N/A | 0.0% |
+| **6** | Attacked FedAvg (No Defense) | 25% Gaussian Noise Injection ($\sigma = 2.0$) | 11.8139 | 455.82 | 159.66% | 0.0% | 0.0% |
+| **7** | Attacked FedAvg + Hash Only | Hash Check Only (No Norm Filter) | 11.8139 | 455.82 | 159.66% | 0.0% | 0.0% |
+| **8** | Attacked FedAvg + Norm Filter | **GreenFed-XAI Defended ($\tau = 2.50$)** | **0.1584** | **12.85** | **4.69%** | **100.0%** | **0.0%** |
+| **9** | Attacked FedAvg + Adaptive | Constrained Perturbation ($\|\Delta w\| \le 0.95\tau$) | 0.1800 | 14.64 | 5.37% | 0.0% | 0.0% |
+| **10** | Sensor Attack (No Oracle) | Raw Biased Telemetry | 0.1506 | 12.12 | 4.44% | N/A | N/A |
+| **11** | Sensor Attack (With Oracle) | IoT Oracle Validated & Mitigated | 0.1445 | 11.61 | 4.29% | N/A | N/A |
 
 ---
 
-## 📈 Federated Learning Convergence
+## 🔍 Explainable AI & Audit Findings
 
-![FedAvg Loss Curves](outputs/fedavg_loss_curve.png)
-*Figure: Convergence comparison and yield spread error curves across federated communication rounds.*
+1. **Efficiency (Additivity) Axiom**: Verified that $\sum_{j=1}^5 \phi_j(x) + \phi_0 = f(x)$ with residual error $< 10^{-6}\text{ bps}$ across all 1,500 test bonds.
+2. **Global Feature Attribution Ranking**:
+   - `tenor`: **22.29%** (term premium and duration risk)
+   - `credit_rating_encoded`: **22.20%** (credit default risk baseline)
+   - `carbon_footprint_score`: **19.36%** (primary greenium pricing discount)
+   - `esg_controversy_score`: **18.20%** (downside reputational penalty)
+   - `coupon_rate`: **17.95%** (nominal cash flow structure)
+3. **10-Point Carbon Score Sensitivity**: Across 1,345 eligible test bonds ($C_t \le 90.0$), a $+10.0$ point carbon upgrade yields an empirical mean yield spread reduction of **$-2.45\text{ bps}$** (median $-2.53\text{ bps}$, std $15.08\text{ bps}$). Documented as model sensitivity under synthetic generation, not a causal claim.
+4. **Off-Chain Cryptographic Tamper Evidence**: Complete pricing contexts are serialized to deterministic canonical JSON, with only 32-byte SHA-256 digests committed to the blockchain. Any single-bit alteration triggers instant hash mismatch detection (`INTEGRITY_VIOLATION_HASH_MISMATCH`).
 
 ---
 
-## 🧪 Test Suite (112 / 112 Passed)
+## 💻 Quickstart: Running the Platform
 
-To run the full unit and integration test suite:
+### Option 1: Native One-Command Launch (Fastest)
+
+Launch both the **FastAPI Backend** and the **Next.js 14 Web Dashboard** simultaneously:
+
+```powershell
+python run_dashboard.py
+```
+*(Or double-click `run_dashboard.bat` on Windows)*
+
+* **Interactive Web Dashboard**: `http://localhost:3000`
+* **FastAPI Swagger API Documentation**: `http://127.0.0.1:8000/docs`
+* **API Health Check**: `http://127.0.0.1:8000/api/health`
+
+---
+
+### Option 2: Docker Compose (Optional)
+
+```bash
+docker compose up --build
+```
+
+---
+
+## 🧪 Testing & Verification
+
+Execute the complete 169-test suite covering PyTorch models, Flower clients, smart contracts, attack simulations, SHAP explainers, audit trail managers, and REST endpoints:
 
 ```bash
 pytest tests/ -v
 ```
 
 ```
-tests/test_blockchain.py    15 passed
-tests/test_centralized.py   29 passed
-tests/test_fl.py            13 passed
-tests/test_generate_bonds.py 22 passed
-tests/test_oracle_validator.py 19 passed
-tests/test_simulate_sensors.py 14 passed
-======================= 112 passed in 188s =======================
+====================== 169 passed, 7 warnings in 31.33s =======================
 ```
 
 ---
 
-## 💻 Quick Start & Reproduction
+## 📄 License & Academic Citation
 
-### 1. Installation
-```bash
-git clone https://github.com/SuhasRam356/GreenFed-XAI-Blockchain-Verified-Federated-Learning-for-Green-Bond-Pricing.git
-cd GreenFed-XAI-Blockchain-Verified-Federated-Learning-for-Green-Bond-Pricing
-pip install -r requirements.txt
-```
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-### 2. Generate Dataset & Run Oracle Validation (Phase 1)
-```bash
-python data/generate_bonds.py
-python iot/simulate_sensors.py --hours 48
-python iot/oracle_validator.py
-```
-
-### 3. Train Centralized Baselines (Phase 2)
-```bash
-python models/train_centralized.py
-```
-
-### 4. Run Federated Learning Across 8 Banks (Phase 3)
-```bash
-python fl/server.py --rounds 25 --clients 8 --local-epochs 3
-```
-
-### 5. Run Blockchain-Verified Federated Learning (Phase 4)
-```bash
-python fl/server.py --rounds 25 --clients 8 --local-epochs 3 --blockchain --tau 2.5
-```
-
----
-
-## 📂 Repository Structure
-
-```
-greenfed-xai/
-├── data/
-│   ├── __init__.py
-│   └── generate_bonds.py          # Phase 1a: Synthetic green bond generator
-├── iot/
-│   ├── __init__.py
-│   ├── simulate_sensors.py        # Phase 1b: 500 IoT virtual sensors
-│   └── oracle_validator.py        # Phase 1c: Smart contract validator
-├── models/
-│   ├── __init__.py
-│   ├── nn_model.py                # 128-64-32 PyTorch neural network
-│   ├── preprocessing.py           # Scaler and ordinal encoder
-│   └── train_centralized.py       # Phase 2: Centralized baselines
-├── fl/
-│   ├── __init__.py
-│   ├── dataset_partitioner.py     # Multi-bank data partitioner (IID/Non-IID)
-│   ├── client.py                  # Flower NumPyClient with grad norm tracking
-│   ├── strategy_fedavg.py         # GreenFedAvgStrategy with eval hooks
-│   ├── strategy_blockchain.py     # Phase 4: BlockchainVerifiedStrategy
-│   └── server.py                  # Phase 3 & 4: Federated simulation engine
-├── chain/
-│   ├── __init__.py
-│   ├── mock_ledger.py             # Phase 4: Python mock blockchain & smart contract
-│   └── chaincode/
-│       ├── smart_contract.go      # Phase 4: Go chaincode (Hyperledger Fabric 2.4+)
-│       └── go.mod                 # Go module definition
-├── tests/
-│   ├── __init__.py
-│   ├── test_generate_bonds.py     # 22 tests
-│   ├── test_simulate_sensors.py   # 14 tests
-│   ├── test_oracle_validator.py   # 19 tests
-│   ├── test_centralized.py        # 29 tests
-│   ├── test_fl.py                 # 13 tests
-│   └── test_blockchain.py         # 15 tests (Phase 4 verification)
-├── outputs/                       # CSV datasets, model weights, loss curves, ledger dumps
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
-├── outputs/                       # CSV datasets, model weights, loss curves
-├── .gitignore
-├── requirements.txt
-└── README.md
-```
-
----
-
-## 📜 Citation & Reference
+If you use GreenFed-XAI in your research, please cite:
 ```bibtex
-@article{kaur2025greenfedxai,
+@article{greenfed_xai_2026,
   title={Blockchain-Verified Federated Learning for ESG-Driven Green Bond Pricing: An Explainable AI Approach with IoT-Enabled Carbon Footprint Oracles},
-  author={Kaur, Jasleen},
-  journal={IEEE Transactions / Tech. Rep.},
-  year={2025}
+  author={Kaur, Jasleen and Ram, Suhas},
+  journal={IEEE Transactions on Sustainable Computing},
+  year={2026}
 }
 ```
-

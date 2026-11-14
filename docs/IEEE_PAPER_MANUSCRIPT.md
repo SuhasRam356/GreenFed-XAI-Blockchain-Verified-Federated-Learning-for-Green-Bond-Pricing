@@ -258,3 +258,4 @@ Future extensions include deploying zero-knowledge proofs (zk-SNARKs) to verify 
 6. Basel Committee on Banking Supervision, "Principles for effective risk data aggregation and risk reporting (BCBS 239)," Bank for International Settlements, Tech. Rep., 2013.
 7. European Commission, "European Green Bond Standard (EU GBS)," Regulation (EU) 2023/2631, Nov. 2023.
 8. ICMA, "Green Bond Principles: Voluntary Process Guidelines for Issuing Green Bonds," International Capital Market Association, Tech. Rep., Jun. 2021.
+

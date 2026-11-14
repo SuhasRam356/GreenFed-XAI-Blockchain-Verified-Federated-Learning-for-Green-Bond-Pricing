@@ -128,3 +128,4 @@
 | **Attack False Positive Rate** | **0.0%** (zero honest clients rejected) | Acceptable threshold $< 5.0\%$ |
 | **SHAP Efficiency Error** | **$< 10^{-6}\text{ bps}$** (exact additivity) | Axiomatic tolerance $< 0.15\text{ bps}$ |
 | **Full Stack UI Polish** | **Next.js 14 + Tailwind + FastAPI** | Typical academic Streamlit prototype |
+
